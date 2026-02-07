@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: balazsillovai30823
+    database: dataexpert_student
+    schema: balazsillovai30823
+    tables:
+      - name: sp500_stock_prices
+      - name: sp500_stock_prices_backfill
+      - name: sp500_news

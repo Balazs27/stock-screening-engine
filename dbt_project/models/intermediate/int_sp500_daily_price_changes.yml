@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: int_sp500_daily_price_changes
+    description: "Intermediate table for S&P 500 daily price changes."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null

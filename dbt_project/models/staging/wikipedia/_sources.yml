@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: balazsillovai30823
+    database: dataexpert_student
+    schema: balazsillovai30823
+    tables:
+      - name: sp500_tickers_lookup
+        description: >
+          "This table contains the list of S&P 500 tickers and their corresponding company names. 
+          It serves as a reference for identifying which stocks are included in the S&P 500 index."

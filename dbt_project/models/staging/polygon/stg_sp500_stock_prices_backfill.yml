@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: stg_sp500_stock_prices_backfill
+    description: "Staging table for S&P 500 stock prices backfill (history)."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
