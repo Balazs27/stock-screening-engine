@@ -1,3 +1,15 @@
 ## Ignore environment variable files
 .env
 .env.*
+
+# Ignore Python virtual environment directories
+venv/
+
+## dbt project files
+dbt_project/logs/
+dbt_project/.user.yml
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/venv/
+dbt_project/package-lock.yml
