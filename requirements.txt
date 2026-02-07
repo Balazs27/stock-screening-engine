@@ -1,0 +1,7 @@
+apache-airflow-providers-snowflake
+apache-airflow-providers-amazon
+boto3
+python-dotenv
+requests
+astronomer-cosmos
+sec-api
