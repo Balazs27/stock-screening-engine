@@ -256,6 +256,7 @@ class PolygonClient:
                         "timespan": timespan,
                         "series_type": "close",
                         "date": run_date,
+                        "extracted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 )
             return rows
