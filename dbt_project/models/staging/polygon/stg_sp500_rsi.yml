@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: stg_sp500_rsi
+    description: "Staging table for S&P 500 RSI."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
