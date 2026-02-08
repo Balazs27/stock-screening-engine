@@ -19,7 +19,7 @@ External Sources
         ↓
 Python ETL Jobs (src/jobs)
         ↓
-Snowflake RAW / LOOKUP / SOURCE tables
+Snowflake RAW / LOOKUP tables
         ↓
 dbt (staging → intermediate → marts)
         ↓
@@ -43,7 +43,7 @@ Key architectural principle:
 
 ### 2. Polygon API
 
-* Market data (prices, volumes, indicators)
+* Market data (prices, volumes, indicators, news)
 * Filtered strictly to S&P 500 tickers from the lookup table
 
 ### 3. FMP API
@@ -144,12 +144,64 @@ stock-screening-engine/
 * dbt project successfully migrated and validated (`dbt debug` passes)
 * Environment variables managed via `.env` / `.env.example`
 * Core dependencies installed via `requirements.txt`
-* Wikipedia S&P 500 scraper has been **successfully refactored** into the new modular structure
-* Original bootcamp scripts are copied into `capstone_project/` for:
+* Wikipedia S&P 500 scraper has been **successfully refactored** into the new modular structure (`api_clients`, `loaders`, `jobs`)
+* Polygon ETL scripts (prices, indicators, news) have been **successfully sliced and migrated** into the modular structure under `src/`
+* Original bootcamp / monolithic scripts are copied into `capstone_project/` for:
 
   * Safe experimentation
   * Easier slicing/refactoring
   * Allowing Claude to help refactor logic incrementally
+
+---
+
+## Airflow DAG Design
+
+Airflow is used **strictly for orchestration**, not business logic. All heavy lifting is done in `src/jobs/*`.
+
+### DAG Categories
+
+The project intentionally separates **daily operational DAGs** from **one-time or exceptional backfill DAGs**.
+
+#### Daily DAGs (Automated)
+
+These DAGs run on a daily schedule and represent the normal operating state of the platform:
+
+* `sp500_universe_dag.py`
+
+  * Fetches the current S&P 500 universe from Wikipedia
+  * Produces a daily snapshot in `sp500_tickers_lookup`
+  * This is the **upstream dependency** for all other ETLs
+
+* `polygon_daily_prices_dag.py`
+
+  * Fetches daily OHLCV price data from Polygon
+  * Filters tickers using the latest available S&P 500 universe in Snowflake
+
+* `polygon_daily_news_dag.py`
+
+  * Fetches daily news articles from Polygon
+  * Filters tickers using the latest available S&P 500 universe in Snowflake
+
+Each daily DAG:
+
+* Imports a single callable from `src/jobs/*`
+* Passes `ds` (execution date)
+* Contains no API, SQL, or transformation logic
+
+#### Backfill DAGs (Manual / Bounded)
+
+These DAGs exist for **historical completeness** and are not part of daily operations:
+
+* `polygon_prices_backfill_dag.py`
+* `polygon_news_backfill_dag.py`
+
+Characteristics:
+
+* Triggered manually or with bounded `catchup`
+* Run once (or very rarely)
+* Use today’s S&P 500 universe as the filtering set
+
+Backfills intentionally **do not attempt to reconstruct historical index membership**.
 
 ---
 
