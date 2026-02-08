@@ -41,7 +41,8 @@ def run(run_date: str, window: int = DEFAULT_WINDOW, limit: int = DEFAULT_LIMIT)
         window_size INTEGER,
         timespan VARCHAR(50),
         series_type VARCHAR(50),
-        date DATE
+        date DATE,
+        extracted_at TIMESTAMP_NTZ
     )
     """
 

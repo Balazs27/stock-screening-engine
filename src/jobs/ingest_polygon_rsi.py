@@ -13,7 +13,7 @@ from src.utils.dates import today
 LOOKUP_TABLE = "sp500_tickers_lookup"
 TABLE = "sp500_rsi"
 DEFAULT_WINDOW = 14
-DEFAULT_LIMIT = 120
+DEFAULT_LIMIT = 1
 
 
 def run(run_date: str, window: int = DEFAULT_WINDOW, limit: int = DEFAULT_LIMIT):
@@ -41,7 +41,9 @@ def run(run_date: str, window: int = DEFAULT_WINDOW, limit: int = DEFAULT_LIMIT)
         window_size INTEGER,
         timespan VARCHAR(50),
         series_type VARCHAR(50),
-        date DATE
+        date DATE,
+        extracted_at TIMESTAMP_NTZ,
+        PRIMARY KEY (ticker, date)
     )
     """
 
