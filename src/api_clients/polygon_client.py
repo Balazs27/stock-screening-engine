@@ -322,3 +322,68 @@ class PolygonClient:
 
         results = self._fetch_batch(tickers, _fetch_one, label="articles")
         return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: News (date range — backfill)
+    # --------------------------------------------------
+
+    def fetch_news_range(
+        self,
+        tickers: list[str],
+        start_date: str,
+        end_date: str,
+        limit_per_ticker: int = 100,
+    ) -> pd.DataFrame:
+        """Fetch news articles over a date range (1 API call per ticker)."""
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/v2/reference/news"
+                f"?ticker={ticker}"
+                f"&published_utc.gte={start_date}"
+                f"&published_utc.lte={end_date}"
+                f"&limit={limit_per_ticker}"
+                f"&sort=published_utc"
+                f"&order=desc"
+                f"&apiKey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if data.get("status") != "OK":
+                return []
+            articles = []
+            for a in data.get("results", []):
+                published_utc = None
+                date_val = None
+                if a.get("published_utc"):
+                    published_utc = datetime.fromisoformat(
+                        a["published_utc"].replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
+                    date_val = published_utc.strftime("%Y-%m-%d")
+                articles.append(
+                    {
+                        "ticker": ticker,
+                        "article_id": a.get("id"),
+                        "publisher_name": a.get("publisher", {}).get("name"),
+                        "publisher_homepage_url": a.get("publisher", {}).get(
+                            "homepage_url"
+                        ),
+                        "publisher_logo_url": a.get("publisher", {}).get("logo_url"),
+                        "title": a.get("title"),
+                        "author": a.get("author"),
+                        "published_utc": published_utc,
+                        "article_url": a.get("article_url"),
+                        "tickers": json.dumps(a.get("tickers")),
+                        "image_url": a.get("image_url"),
+                        "description": a.get("description"),
+                        "keywords": json.dumps(a.get("keywords")),
+                        "date": date_val,
+                        "extracted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                )
+            return articles
+
+        results = self._fetch_batch(tickers, _fetch_one, label="articles")
+        return pd.DataFrame(results) if results else pd.DataFrame()

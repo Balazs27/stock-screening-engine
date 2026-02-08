@@ -86,3 +86,34 @@ def overwrite_partition_with_variants(
     snowpark_df.select(*select_cols)\
         .write.mode("append")\
         .save_as_table(table_name)
+
+
+def overwrite_date_range_with_variants(
+    session: Session,
+    df,
+    table_name: str,
+    start_date: str,
+    end_date: str,
+    create_table_sql: str,
+    variant_columns: list[str],
+):
+    """Like overwrite_date_range but applies parse_json() to VARIANT columns."""
+    from snowflake.snowpark.functions import parse_json, col
+
+    session.sql(create_table_sql).collect()
+    session.sql(
+        f"DELETE FROM {table_name} WHERE date BETWEEN '{start_date}' AND '{end_date}'"
+    ).collect()
+
+    df.columns = [c.upper() for c in df.columns]
+    snowpark_df = session.create_dataframe(df)
+
+    variant_upper = {v.upper() for v in variant_columns}
+    select_cols = [
+        parse_json(col(c)).alias(c) if c in variant_upper else col(c)
+        for c in snowpark_df.columns
+    ]
+
+    snowpark_df.select(*select_cols)\
+        .write.mode("append")\
+        .save_as_table(table_name)
