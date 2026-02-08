@@ -20,3 +20,13 @@ src/api_clients/__pycache__/
 src/jobs/__pycache__/
 src/loaders/__pycache__/
 src/utils/__pycache__/
+
+## Ignore dags directory files
+dags/__pycache__/
+dags/etl/__pycache__/
+dags/exampledag.py
+dags/stock_screening_dag.py
+dags/.airflowignore
+
+## airflow files
+airflow_settings.yaml
