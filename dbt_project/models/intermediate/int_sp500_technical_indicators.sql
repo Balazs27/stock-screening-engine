@@ -17,12 +17,13 @@ moving_averages AS (
             ORDER BY date 
             ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
         ) as sma_20,
-
+        
+        /*
         AVG(close) OVER (
             PARTITION BY ticker 
             ORDER BY date 
             ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-        ) as sma_30,
+        ) as sma_30, */
         
         AVG(close) OVER (
             PARTITION BY ticker 
@@ -55,7 +56,7 @@ relative_strength_index AS (
         series_type,
         date
         
-    from {{ ref('stg_sp500_rsi') }}
+    from {{ ref('stg_sp500_rsi_backfill') }}
 
 ),
 
@@ -67,7 +68,7 @@ joined AS (
         ma.date,
         ma.close,
         ROUND(ma.sma_20, 2) as sma_20,
-        ROUND(ma.sma_30, 2) as sma_30,
+        --ROUND(ma.sma_30, 2) as sma_30,
         ROUND(ma.sma_50, 2) as sma_50,
         ROUND(ma.sma_200, 2) as sma_200,
         ROUND(rsi.rsi_value, 2) as rsi_value,
