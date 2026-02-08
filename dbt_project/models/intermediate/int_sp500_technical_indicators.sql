@@ -42,59 +42,43 @@ moving_averages AS (
         
     from price_data
 ),
-    -- Step 2: Calculate daily price changes
-    price_changes AS (
-    
+
+relative_strength_index AS (
+
     select
 
         ticker,
-        date,
-        close,
-        close - LAG(close) over (partition by ticker order by date) as price_change
+        timestamp,
+        rsi_value,
+        window_size,
+        timespan,
+        series_type,
+        date
+        
+    from {{ ref('stg_sp500_rsi') }}
 
-    from price_data
 ),
 
-    -- Step 3: Separate gains and losses
-    gains_losses AS (
+joined AS (
+
+    select
+
+        ma.ticker,
+        ma.date,
+        ma.close,
+        ROUND(ma.sma_20, 2) as sma_20,
+        ROUND(ma.sma_30, 2) as sma_30,
+        ROUND(ma.sma_50, 2) as sma_50,
+        ROUND(ma.sma_200, 2) as sma_200,
+        ROUND(rsi.rsi_value, 2) as rsi_value,
+        rsi.window_size as rsi_window_size,
+        rsi.timespan as rsi_timespan, --unneccesary column but for clarity keeping it here in the int model
+        rsi.series_type as rsi_series_type --unneccesary column but for clarity keeping it here in the int model
         
-        select 
+    from moving_averages ma
+    left join relative_strength_index rsi
+    on ma.ticker = rsi.ticker and ma.date = rsi.date
 
-            ticker,
-            date,
-            CASE WHEN price_change > 0 THEN price_change ELSE 0 END as gain,
-            CASE WHEN price_change < 0 THEN ABS(price_change) ELSE 0 END as loss
-
-        from price_changes
-),
-
-    -- Step 4: Calculate 14-day average gains/losses
-    avg_gains_losses AS (
-        
-        select 
-
-            ticker,
-            date,
-            AVG(gain) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_gain,
-            AVG(loss) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_loss
-
-    from gains_losses
 )
 
--- Step 5: Calculate RSI and combine with SMAs
-select 
-
-    ma.ticker,
-    ma.date,
-    ma.close,
-    ma.sma_20,
-    ma.sma_30,
-    ma.sma_50,
-    ma.sma_200,
-    CASE 
-        WHEN avl.avg_loss = 0 THEN 100
-        ELSE 100 - (100 / (1 + (avl.avg_gain / avl.avg_loss)))
-    END as rsi_14 --This is incorrect, gives me different value compared to the Polygon API, need to check the formula
-
-from moving_averages ma
-left join avg_gains_losses avl using (ticker, date)
+select * from joined
