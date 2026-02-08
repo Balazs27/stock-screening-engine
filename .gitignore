@@ -2,7 +2,7 @@
 .env
 .env.*
 
-# Ignore Python virtual environment directories
+## Ignore Python virtual environment directories
 venv/
 
 ## dbt project files
@@ -13,3 +13,10 @@ dbt_project/logs/
 dbt_project/dbt_packages/
 dbt_project/venv/
 dbt_project/package-lock.yml
+
+## Ignore src directory files
+src/__pycache__/
+src/api_clients/__pycache__/
+src/jobs/__pycache__/
+src/loaders/__pycache__/
+src/utils/__pycache__/
