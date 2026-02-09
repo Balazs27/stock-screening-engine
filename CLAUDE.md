@@ -7,7 +7,7 @@
 
 In plain terms: this system continuously watches hundreds of stocks, processes price and fundamentals data, and outputs a ranked list of stocks based on health, momentum, and risk signals.
 
-This repository is a **Data Engineering capstone project**, designed to demonstrate real-world practices: modular ETL design, orchestration with Airflow, transformations with dbt, and analytics-ready data models in Snowflake.
+This repository is a **Analytics / Data Engineering capstone project**, designed to demonstrate real-world practices: modular ETL design, orchestration with Airflow, transformations with dbt, and analytics-ready data models in Snowflake.
 
 ---
 
@@ -49,7 +49,15 @@ Key architectural principle:
 ### 3. FMP API
 
 * Fundamentals and financial statement data
-* Also filtered to S&P 500 tickers
+* Filtered to S&P 500 tickers
+* API access is active and configured via `.env`
+* Planned financial statement endpoints:
+
+  * Income Statement
+  * Balance Sheet Statement
+  * Cash Flow Statement
+  * Latest Financial Statements
+* These datasets will power **fundamental scoring models** (profitability, growth, leverage, cash flow quality)
 
 ---
 
@@ -146,6 +154,10 @@ stock-screening-engine/
 * Core dependencies installed via `requirements.txt`
 * Wikipedia S&P 500 scraper has been **successfully refactored** into the new modular structure (`api_clients`, `loaders`, `jobs`)
 * Polygon ETL scripts (prices, indicators, news) have been **successfully sliced and migrated** into the modular structure under `src/`
+* One additional Polygon technical indicator ETL is planned: **MACD** (`/v1/indicators/macd/{ticker}`)
+
+  * Will follow the same pattern as RSI (daily + backfill pipelines)
+  * Used to further enrich technical scoring models
 * Original bootcamp / monolithic scripts are copied into `capstone_project/` for:
 
   * Safe experimentation
@@ -177,10 +189,25 @@ These DAGs run on a daily schedule and represent the normal operating state of t
   * Fetches daily OHLCV price data from Polygon
   * Filters tickers using the latest available S&P 500 universe in Snowflake
 
+* `polygon_daily_prices_dag.py`
+
+  * Fetches daily OHLCV price data from Polygon
+  * Filters tickers using the latest available S&P 500 universe in Snowflake
+
 * `polygon_daily_news_dag.py`
 
   * Fetches daily news articles from Polygon
   * Filters tickers using the latest available S&P 500 universe in Snowflake
+
+* `polygon_daily_rsi_dag.py`
+
+  * Fetches daily RSI values from Polygon (`limit=1`)
+  * Used as a momentum indicator in technical scoring models
+
+* `polygon_daily_macd_dag.py` (planned)
+
+  * Fetches daily MACD values from Polygon
+  * Complements RSI for technical momentum analysis
 
 Each daily DAG:
 
@@ -194,6 +221,15 @@ These DAGs exist for **historical completeness** and are not part of daily opera
 
 * `polygon_prices_backfill_dag.py`
 * `polygon_news_backfill_dag.py`
+* `polygon_rsi_backfill_dag.py`
+* `polygon_macd_backfill_dag.py` (planned)
+
+Backfill DAGs:
+
+* Use **large-limit Polygon endpoints** (not day-by-day loops)
+* Run once or very rarely
+* Populate historical indicator data efficiently
+* Use today’s S&P 500 universe as the filtering set`
 
 Characteristics:
 
