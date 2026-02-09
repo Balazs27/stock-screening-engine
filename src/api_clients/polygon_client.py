@@ -267,6 +267,72 @@ class PolygonClient:
         return pd.DataFrame(results) if results else pd.DataFrame()
 
     # --------------------------------------------------
+    # Endpoint: MACD
+    # --------------------------------------------------
+
+    def fetch_macd(
+        self,
+        tickers: list[str],
+        run_date: str,
+        short_window: int = 12,
+        long_window: int = 26,
+        signal_window: int = 9,
+        timespan: str = "day",
+        limit: int = 1,
+    ) -> pd.DataFrame:
+        """Fetch MACD indicator for a list of tickers."""
+        date_obj = datetime.strptime(run_date, "%Y-%m-%d").date()
+        timestamp_lte = int(
+            datetime.combine(date_obj, datetime.max.time()).timestamp() * 1000
+        )
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/v1/indicators/macd/{ticker}"
+                f"?timestamp.lte={timestamp_lte}"
+                f"&timespan={timespan}"
+                f"&adjusted=true"
+                f"&short_window={short_window}"
+                f"&long_window={long_window}"
+                f"&signal_window={signal_window}"
+                f"&series_type=close"
+                f"&order=desc"
+                f"&limit={limit}"
+                f"&apiKey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if data.get("status") != "OK" or not data.get("results"):
+                return []
+            rows = []
+            for v in data["results"].get("values", []):
+                ts = v.get("timestamp")
+                rows.append(
+                    {
+                        "ticker": ticker,
+                        "timestamp": (
+                            datetime.fromtimestamp(ts / 1000) if ts else None
+                        ),
+                        "macd_value": v.get("value"),
+                        "signal_value": v.get("signal"),
+                        "histogram_value": v.get("histogram"),
+                        "short_window": short_window,
+                        "long_window": long_window,
+                        "signal_window": signal_window,
+                        "timespan": timespan,
+                        "series_type": "close",
+                        "date": run_date,
+                        "extracted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                )
+            return rows
+
+        results = self._fetch_batch(tickers, _fetch_one, label="MACD points")
+        return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
     # Endpoint: News
     # --------------------------------------------------
 
