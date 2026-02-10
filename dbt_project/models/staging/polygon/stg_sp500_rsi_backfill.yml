@@ -1,9 +1,0 @@
-version: 2
-
-models:
-  - name: stg_sp500_rsi_backfill
-    description: "Staging table for S&P 500 RSI backfill."
-    columns:
-      - name: ticker
-        data_tests:
-          - not_null

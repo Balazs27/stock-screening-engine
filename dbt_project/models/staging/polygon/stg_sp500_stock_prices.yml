@@ -1,9 +1,0 @@
-version: 2
-
-models:
-  - name: stg_sp500_stock_prices
-    description: "Staging table for S&P 500 stock prices."
-    columns:
-      - name: ticker
-        data_tests:
-          - not_null

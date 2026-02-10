@@ -1,9 +1,0 @@
-version: 2
-
-models:
-  - name: stg_sp500_news
-    description: "Staging table for S&P 500 news."
-    columns:
-      - name: ticker
-        data_tests:
-          - not_null
