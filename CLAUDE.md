@@ -152,17 +152,27 @@ stock-screening-engine/
 * dbt project successfully migrated and validated (`dbt debug` passes)
 * Environment variables managed via `.env` / `.env.example`
 * Core dependencies installed via `requirements.txt`
-* Wikipedia S&P 500 scraper has been **successfully refactored** into the new modular structure (`api_clients`, `loaders`, `jobs`)
-* Polygon ETL scripts (prices, indicators, news) have been **successfully sliced and migrated** into the modular structure under `src/`
-* One additional Polygon technical indicator ETL is planned: **MACD** (`/v1/indicators/macd/{ticker}`)
+* Wikipedia S&P 500 scraper fully refactored into the modular ETL structure
+* Polygon ETL pipelines implemented for:
 
-  * Will follow the same pattern as RSI (daily + backfill pipelines)
-  * Used to further enrich technical scoring models
-* Original bootcamp / monolithic scripts are copied into `capstone_project/` for:
+  * Daily and backfill stock prices
+  * Daily and backfill news
+  * Daily and backfill RSI
+  * Daily and backfill MACD
+* FMP ETL pipelines implemented for:
 
-  * Safe experimentation
-  * Easier slicing/refactoring
-  * Allowing Claude to help refactor logic incrementally
+  * Income Statement
+  * Balance Sheet Statement
+  * Cash Flow Statement
+* All Polygon and FMP pipelines are orchestrated via Airflow DAGs
+* dbt staging models implemented for:
+
+  * Wikipedia, Polygon, and FMP raw data
+* dbt intermediate models implemented to combine technical indicators (SMA, RSI, MACD)
+* dbt mart models implemented to produce a **technical indicator score per ticker**
+* Original bootcamp / monolithic scripts remain in `capstone_project/` for reference and safe experimentation
+
+At this stage, the platform can ingest **all data required for the current scoring algorithm** end‑to‑end.
 
 ---
 
@@ -176,68 +186,37 @@ The project intentionally separates **daily operational DAGs** from **one-time o
 
 #### Daily DAGs (Automated)
 
-These DAGs run on a daily schedule and represent the normal operating state of the platform:
-
-* `sp500_universe_dag.py`
-
-  * Fetches the current S&P 500 universe from Wikipedia
-  * Produces a daily snapshot in `sp500_tickers_lookup`
-  * This is the **upstream dependency** for all other ETLs
-
+* `sp500_lookup_dag.py`
 * `polygon_daily_prices_dag.py`
-
-  * Fetches daily OHLCV price data from Polygon
-  * Filters tickers using the latest available S&P 500 universe in Snowflake
-
-* `polygon_daily_prices_dag.py`
-
-  * Fetches daily OHLCV price data from Polygon
-  * Filters tickers using the latest available S&P 500 universe in Snowflake
-
 * `polygon_daily_news_dag.py`
-
-  * Fetches daily news articles from Polygon
-  * Filters tickers using the latest available S&P 500 universe in Snowflake
-
 * `polygon_daily_rsi_dag.py`
+* `polygon_daily_macd_dag.py`
 
-  * Fetches daily RSI values from Polygon (`limit=1`)
-  * Used as a momentum indicator in technical scoring models
+These DAGs:
 
-* `polygon_daily_macd_dag.py` (planned)
-
-  * Fetches daily MACD values from Polygon
-  * Complements RSI for technical momentum analysis
-
-Each daily DAG:
-
-* Imports a single callable from `src/jobs/*`
-* Passes `ds` (execution date)
-* Contains no API, SQL, or transformation logic
+* Run daily
+* Depend on the latest available S&P 500 universe
+* Only fetch incremental data for the execution date
 
 #### Backfill DAGs (Manual / Bounded)
-
-These DAGs exist for **historical completeness** and are not part of daily operations:
 
 * `polygon_prices_backfill_dag.py`
 * `polygon_news_backfill_dag.py`
 * `polygon_rsi_backfill_dag.py`
-* `polygon_macd_backfill_dag.py` (planned)
+* `polygon_macd_backfill_dag.py`
 
 Backfill DAGs:
 
-* Use **large-limit Polygon endpoints** (not day-by-day loops)
-* Run once or very rarely
-* Populate historical indicator data efficiently
-* Use today’s S&P 500 universe as the filtering set`
+* Use efficient range or large‑limit API calls
+* Are triggered manually
+* Do not attempt to reconstruct historical index membership
 
-Characteristics:
+#### Experimental / Evaluation DAGs
 
-* Triggered manually or with bounded `catchup`
-* Run once (or very rarely)
-* Use today’s S&P 500 universe as the filtering set
+* `fmp_news_daily_dag.py` (planned)
 
-Backfills intentionally **do not attempt to reconstruct historical index membership**.
+This DAG exists to **compare FMP news coverage vs Polygon news**.
+Only one provider will be kept after evaluation.
 
 ---
 
