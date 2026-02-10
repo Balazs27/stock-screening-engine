@@ -9,5 +9,7 @@ sources:
       - name: sp500_stock_prices_backfill
       - name: sp500_rsi
       - name: sp500_rsi_backfill
+      - name: sp500_macd
+      - name: sp500_macd_backfill
       - name: sp500_news
       - name: sp500_news_backfill

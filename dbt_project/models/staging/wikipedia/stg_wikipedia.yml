@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: stg_sp500_tickers
+    description: "Staging table for S&P 500 tickers from Wikipedia."
+    columns:
+      - name: ticker
+        data_tests:
+          - unique
+          - not_null

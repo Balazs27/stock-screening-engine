@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: balazsillovai30823
+    database: dataexpert_student
+    schema: balazsillovai30823
+    tables:
+      - name: sp500_income_statements
+      - name: sp500_balance_sheets
+      - name: sp500_cash_flow_statements
+      - name: sp500_fmp_news

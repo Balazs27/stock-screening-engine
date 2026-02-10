@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: stg_fmp_income_statement
+    description: "Staging table for S&P 500 annual income statements from FMP."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
+
+  - name: stg_fmp_balance_sheet
+    description: "Staging table for S&P 500 annual balance sheets from FMP."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
+
+  - name: stg_fmp_cash_flow
+    description: "Staging table for S&P 500 annual cash flow statements from FMP."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
+
+  - name: stg_fmp_news
+    description: "Staging table for S&P 500 news articles from FMP (experimental, for comparison with Polygon news)."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null

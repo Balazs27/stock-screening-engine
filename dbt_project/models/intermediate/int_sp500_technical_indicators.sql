@@ -55,8 +55,28 @@ relative_strength_index AS (
         timespan,
         series_type,
         date
-        
+
     from {{ ref('stg_sp500_rsi_backfill') }}
+
+),
+
+macd_indicator AS (
+
+    select
+
+        ticker,
+        timestamp,
+        macd_value,
+        signal_value,
+        histogram_value,
+        short_window,
+        long_window,
+        signal_window,
+        timespan,
+        series_type,
+        date
+
+    from {{ ref('stg_sp500_macd_backfill') }}
 
 ),
 
@@ -74,11 +94,16 @@ joined AS (
         ROUND(rsi.rsi_value, 2) as rsi_value,
         rsi.window_size as rsi_window_size,
         rsi.timespan as rsi_timespan, --unneccesary column but for clarity keeping it here in the int model
-        rsi.series_type as rsi_series_type --unneccesary column but for clarity keeping it here in the int model
-        
+        rsi.series_type as rsi_series_type, --unneccesary column but for clarity keeping it here in the int model
+        ROUND(macd.macd_value, 4) as macd_value,
+        ROUND(macd.signal_value, 4) as macd_signal,
+        ROUND(macd.histogram_value, 4) as macd_histogram
+
     from moving_averages ma
     left join relative_strength_index rsi
     on ma.ticker = rsi.ticker and ma.date = rsi.date
+    left join macd_indicator macd
+    on ma.ticker = macd.ticker and ma.date = macd.date
 
 )
 
