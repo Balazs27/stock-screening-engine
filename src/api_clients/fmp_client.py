@@ -366,3 +366,90 @@ class FMPClient:
 
         results = self._fetch_batch(tickers, _fetch_one, label="cash flow statements")
         return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: News (global paginated feed)
+    # --------------------------------------------------
+
+    def fetch_news(
+        self, tickers: list[str], run_date: str, max_pages: int = 20
+    ) -> pd.DataFrame:
+        """Fetch FMP articles for a date, filtered to S&P 500 tickers.
+
+        Unlike other methods, this is NOT per-ticker. FMP exposes a global
+        article feed that we paginate through and filter.
+        """
+        ticker_set = set(tickers)
+        all_articles = []
+        extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"Fetching FMP articles for {run_date} (filtering to {len(tickers)} S&P 500 tickers)...")
+
+        for page in range(max_pages):
+            url = (
+                f"{BASE_URL}/stable/fmp-articles"
+                f"?page={page}"
+                f"&limit=250"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                print(f"  Page {page}: HTTP {response.status_code}, stopping.")
+                break
+
+            data = response.json()
+            if not data:
+                print(f"  Page {page}: empty response, stopping.")
+                break
+
+            page_matches = 0
+            found_older = False
+
+            for article in data:
+                article_date_str = article.get("date", "")
+                article_date = article_date_str[:10] if article_date_str else None
+
+                if article_date and article_date < run_date:
+                    found_older = True
+                    continue
+
+                if article_date != run_date:
+                    continue
+
+                # Parse tickers — format: "NYSE:MRK" or "NYSE:MRK,NASDAQ:AAPL"
+                raw_tickers = article.get("tickers", "")
+                mentioned = [
+                    t.split(":")[-1].strip()
+                    for t in raw_tickers.split(",")
+                    if t.strip()
+                ]
+                matching = [t for t in mentioned if t in ticker_set]
+
+                for ticker in matching:
+                    all_articles.append(
+                        {
+                            "ticker": ticker,
+                            "title": article.get("title"),
+                            "date": run_date,
+                            "content": article.get("content"),
+                            "article_tickers": raw_tickers,
+                            "image_url": article.get("image"),
+                            "article_url": article.get("link"),
+                            "author": article.get("author"),
+                            "site": article.get("site"),
+                            "extracted_at": extracted_at,
+                        }
+                    )
+                    page_matches += 1
+
+            print(
+                f"  Page {page}: {len(data)} articles, "
+                f"{page_matches} matched S&P 500 tickers"
+            )
+
+            if found_older:
+                print(f"  Reached articles older than {run_date}, stopping.")
+                break
+
+        print(f"\nTotal: {len(all_articles)} articles for {run_date}\n")
+        return pd.DataFrame(all_articles) if all_articles else pd.DataFrame()
