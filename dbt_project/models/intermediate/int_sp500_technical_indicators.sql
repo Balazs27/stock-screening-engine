@@ -1,6 +1,6 @@
 with price_data AS (
 
-    select * from {{ ref('stg_sp500_stock_prices_backfill') }}
+    select * from {{ ref('stg_sp500_stock_prices') }}
 
 ),
 -- Step 1: Calculate Simple Moving Averages (SMAs)
@@ -56,7 +56,7 @@ relative_strength_index AS (
         series_type,
         date
 
-    from {{ ref('stg_sp500_rsi_backfill') }}
+    from {{ ref('stg_sp500_rsi') }}
 
 ),
 
@@ -76,7 +76,7 @@ macd_indicator AS (
         series_type,
         date
 
-    from {{ ref('stg_sp500_macd_backfill') }}
+    from {{ ref('stg_sp500_macd') }}
 
 ),
 

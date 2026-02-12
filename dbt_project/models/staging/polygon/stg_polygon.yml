@@ -8,13 +8,6 @@ models:
         data_tests:
           - not_null
 
-  - name: stg_sp500_stock_prices_backfill
-    description: "Staging table for S&P 500 stock prices backfill (history) from Polygon."
-    columns:
-      - name: ticker
-        data_tests:
-          - not_null
-
   - name: stg_sp500_rsi
     description: "Staging table for S&P 500 RSI daily from Polygon."
     columns:
@@ -22,22 +15,8 @@ models:
         data_tests:
           - not_null
 
-  - name: stg_sp500_rsi_backfill
-    description: "Staging table for S&P 500 RSI backfill from Polygon."
-    columns:
-      - name: ticker
-        data_tests:
-          - not_null
-
   - name: stg_sp500_macd
     description: "Staging table for S&P 500 MACD daily from Polygon."
-    columns:
-      - name: ticker
-        data_tests:
-          - not_null
-
-  - name: stg_sp500_macd_backfill
-    description: "Staging table for S&P 500 MACD backfill from Polygon."
     columns:
       - name: ticker
         data_tests:

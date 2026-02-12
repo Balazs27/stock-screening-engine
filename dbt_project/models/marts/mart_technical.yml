@@ -1,9 +1,0 @@
-version: 2
-
-models:
-  - name: mart_sp500_technical_scores
-    description: "Final table for S&P 500 technical scores (trend, momentum, MACD, price action)."
-    columns:
-      - name: ticker
-        data_tests:
-          - not_null

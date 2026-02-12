@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: mart_sp500_technical_scores
+    description: "Final table for S&P 500 technical scores (trend, momentum, MACD, price action)."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
+      - name: technical_score
+        data_tests:
+          - not_null
+
+  - name: mart_sp500_fundamental_scores
+    description: "Final table for S&P 500 fundamental scores (Profitability Quality, Growth Momentum, Financial Health, Cash Quality)."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
+      - name: fundamentals_score
+        data_tests:
+          - not_null
+
+  - name: mart_sp500_composite_scores
+    description: "Final table for S&P 500 composite scores (Technical Scores + Fundamental Scores)."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null

@@ -14,3 +14,10 @@ models:
       - name: ticker
         data_tests:
           - not_null
+
+  - name: int_sp500_fundamentals
+    description: "Intermediate table for S&P 500 fundamentals."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null

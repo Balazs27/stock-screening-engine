@@ -30,3 +30,6 @@ dags/.airflowignore
 
 ## airflow files
 airflow_settings.yaml
+
+## Ignore capstone project directory files (it just for reference)
+capstone_project/
