@@ -24,6 +24,7 @@ src/utils/__pycache__/
 ## Ignore dags directory files
 dags/__pycache__/
 dags/etl/__pycache__/
+dags/dbt/__pycache__/
 dags/exampledag.py
 dags/stock_screening_dag.py
 dags/.airflowignore
