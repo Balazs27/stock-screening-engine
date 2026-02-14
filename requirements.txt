@@ -4,6 +4,7 @@ boto3
 python-dotenv
 requests
 astronomer-cosmos
+dbt-snowflake
 sec-api
 pandas
 snowflake-snowpark-python
