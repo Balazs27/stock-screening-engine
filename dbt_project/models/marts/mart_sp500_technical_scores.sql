@@ -6,8 +6,11 @@
 
 WITH technical_features AS (
 
-    -- Full scan required: LAG(close, 20) needs 20 preceding trading days
+    -- LAG(close, 20) needs 20 trading days; 40 calendar days ≈ 28 trading days (safe buffer)
     SELECT * FROM {{ ref('int_sp500_technical_indicators') }}
+    {% if is_incremental() %}
+    WHERE date >= (SELECT MAX(date) - INTERVAL '40 days' FROM {{ this }})
+    {% endif %}
 
 ),
 

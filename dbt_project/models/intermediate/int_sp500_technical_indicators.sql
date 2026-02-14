@@ -6,8 +6,11 @@
 
 with price_data AS (
 
-    -- Full scan required: SMA-200 needs 199 preceding rows per ticker
+    -- SMA-200 needs 199 preceding rows; 300 calendar days ≈ 210 trading days (safe buffer)
     select * from {{ ref('stg_sp500_stock_prices') }}
+    {% if is_incremental() %}
+    where date >= (select max(date) - interval '300 days' from {{ this }})
+    {% endif %}
 
 ),
 -- Step 1: Calculate Simple Moving Averages (SMAs)
