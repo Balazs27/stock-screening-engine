@@ -2,6 +2,7 @@ with staging as (
 
     select
 
+        date as as_of_date,
         ticker,
         security_name as company_name,
         gics_sector as sector,

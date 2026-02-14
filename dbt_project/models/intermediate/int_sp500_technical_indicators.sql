@@ -1,46 +1,42 @@
+{{ config(
+    materialized='incremental',
+    incremental_strategy='delete+insert',
+    unique_key=['ticker', 'date']
+) }}
+
 with price_data AS (
 
+    -- Full scan required: SMA-200 needs 199 preceding rows per ticker
     select * from {{ ref('stg_sp500_stock_prices') }}
 
 ),
 -- Step 1: Calculate Simple Moving Averages (SMAs)
 moving_averages AS (
-    
+
     select
         ticker,
         date,
         close,
-        
+
         -- Calculate SMAs using window functions
         AVG(close) OVER (
-            PARTITION BY ticker 
-            ORDER BY date 
+            PARTITION BY ticker
+            ORDER BY date
             ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
         ) as sma_20,
-        
-        /*
+
         AVG(close) OVER (
-            PARTITION BY ticker 
-            ORDER BY date 
-            ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-        ) as sma_30, */
-        
-        AVG(close) OVER (
-            PARTITION BY ticker 
-            ORDER BY date 
+            PARTITION BY ticker
+            ORDER BY date
             ROWS BETWEEN 49 PRECEDING AND CURRENT ROW
         ) as sma_50,
-        
+
         AVG(close) OVER (
-            PARTITION BY ticker 
-            ORDER BY date 
+            PARTITION BY ticker
+            ORDER BY date
             ROWS BETWEEN 199 PRECEDING AND CURRENT ROW
         ) as sma_200,
-        
-        -- Calculate RSI (Relative Strength Index)
-        -- RSI = 100 - (100 / (1 + RS)), where RS = Avg Gain / Avg Loss over 14 days
-        -- (Simplified - full formula would be longer)
-        
+
     from price_data
 ),
 
@@ -57,6 +53,9 @@ relative_strength_index AS (
         date
 
     from {{ ref('stg_sp500_rsi') }}
+    {% if is_incremental() %}
+    where date >= (select max(date) - interval '3 days' from {{ this }})
+    {% endif %}
 
 ),
 
@@ -77,6 +76,9 @@ macd_indicator AS (
         date
 
     from {{ ref('stg_sp500_macd') }}
+    {% if is_incremental() %}
+    where date >= (select max(date) - interval '3 days' from {{ this }})
+    {% endif %}
 
 ),
 
@@ -88,7 +90,6 @@ joined AS (
         ma.date,
         ma.close,
         ROUND(ma.sma_20, 2) as sma_20,
-        --ROUND(ma.sma_30, 2) as sma_30,
         ROUND(ma.sma_50, 2) as sma_50,
         ROUND(ma.sma_200, 2) as sma_200,
         ROUND(rsi.rsi_value, 2) as rsi_value,
@@ -108,3 +109,6 @@ joined AS (
 )
 
 select * from joined
+{% if is_incremental() %}
+where date >= (select max(date) - interval '3 days' from {{ this }})
+{% endif %}

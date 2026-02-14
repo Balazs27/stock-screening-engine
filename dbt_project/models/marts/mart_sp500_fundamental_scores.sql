@@ -6,11 +6,13 @@
 WITH fundamentals AS (
 
     SELECT * FROM {{ ref('int_sp500_fundamentals') }}
-    
+
 ),
 
 scoring AS (
+
     SELECT
+    
         ticker,
         date,
         fiscal_year,
@@ -118,6 +120,7 @@ scoring AS (
 )
 
 SELECT
+
     ticker,
     date,
     fiscal_year,

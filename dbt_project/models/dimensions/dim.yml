@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: dim_sp500_companies_current
+    description: "Latest snapshot dimension table for S&P 500 companies. Represent only the latest S&P500 index state. Grain is 1 row per ticker per current date"
+    columns:
+      - name: ticker
+        data_tests:
+          - unique
+          - not_null

@@ -39,6 +39,10 @@ models:
       +materialized: table
       +schema: int
 
+    dimensions: 
+      +materialized: table
+      +schema: dim
+
     marts:
       +materialized: table
       +schema: marts

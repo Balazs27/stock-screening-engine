@@ -1,8 +1,15 @@
 version: 2
 
 models:
-  - name: stg_sp500_tickers
-    description: "Staging table for S&P 500 tickers from Wikipedia."
+  - name: stg_sp500_tickers_snapshot
+    description: "Staging table for S&P 500 tickers from Wikipedia. Grain is 1 row per ticker per day."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
+
+  - name: stg_sp500_tickers_current
+    description: "Latest snapshot staging table for S&P 500 tickers from Wikipedia. Represent only the latest S&P500 index state. Grain is 1 row per ticker per current date."
     columns:
       - name: ticker
         data_tests:

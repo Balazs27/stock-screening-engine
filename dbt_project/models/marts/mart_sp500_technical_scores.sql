@@ -1,5 +1,12 @@
+{{ config(
+    materialized='incremental',
+    incremental_strategy='delete+insert',
+    unique_key=['ticker', 'date']
+) }}
+
 WITH technical_features AS (
 
+    -- Full scan required: LAG(close, 20) needs 20 preceding trading days
     SELECT * FROM {{ ref('int_sp500_technical_indicators') }}
 
 ),
@@ -10,16 +17,16 @@ scoring AS (
 
         ticker,
         date,
-        
+
         -- Component 1: Trend Confirmation (40 pts)
-        CASE 
+        CASE
             WHEN close > sma_20 AND close > sma_50 AND close > sma_200 THEN 40
             WHEN close > sma_20 AND close > sma_50 THEN 30
             WHEN close > sma_20 THEN 20
             WHEN close > sma_50 THEN 10
             ELSE 5
         END as trend_score,
-        
+
         -- Component 2: Momentum Quality (30 pts)
         CASE
             WHEN rsi_value BETWEEN 50 AND 70 THEN 30
@@ -29,11 +36,11 @@ scoring AS (
             WHEN rsi_value < 30 THEN 5
             ELSE 15
         END as momentum_score,
-        
+
         -- Component 3: Price Action (20 pts)
-        (close - LAG(close, 20) OVER (PARTITION BY ticker ORDER BY date)) 
+        (close - LAG(close, 20) OVER (PARTITION BY ticker ORDER BY date))
             / LAG(close, 20) OVER (PARTITION BY ticker ORDER BY date) * 100 as pct_change_20d,
-            
+
         -- Component 4: MACD Signal (10 pts)
         CASE
             WHEN macd_value > macd_signal AND macd_value > 0 THEN 10
@@ -62,3 +69,6 @@ SELECT
     (trend_score + momentum_score + macd_score + price_action_score) as technical_score
 
 FROM scoring
+{% if is_incremental() %}
+WHERE date >= (SELECT MAX(date) - INTERVAL '3 days' FROM {{ this }})
+{% endif %}
