@@ -27,3 +27,10 @@ models:
       - name: ticker
         data_tests:
           - not_null
+
+  - name: mart_sp500_price_performance
+    description: "Final table for S&P 500 price performance metrics (daily return, cumulative return, rolling returns, volatility, drawdown)."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null

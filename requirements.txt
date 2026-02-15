@@ -8,3 +8,5 @@ dbt-snowflake
 sec-api
 pandas
 snowflake-snowpark-python
+boring-semantic-layer[mcp]
+ibis-framework[snowflake]

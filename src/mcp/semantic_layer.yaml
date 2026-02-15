@@ -1,0 +1,615 @@
+# =============================================================================
+# Semantic Layer for Stock Screening Engine
+# =============================================================================
+#
+# Exposes 5 scoring mart tables from the S&P 500 data warehouse.
+# All column references use UPPERCASE to match Snowflake identifiers.
+#
+# Models:
+#   technical_scores    → Daily technical scoring (trend, momentum, MACD, price action)
+#   fundamental_scores  → Annual fundamental scoring (profitability, growth, health, cash)
+#   composite_scores    → Daily blended technical + fundamental scores
+#   industry_scores     → Composite scores enriched with company/sector/industry metadata
+#   price_performance   → Daily returns, volatility, drawdowns with company metadata
+#
+# Analytical Guide for AI:
+#   "Which stocks are strong right now?"         → industry_scores (filter latest date, sort by composite)
+#   "How has AAPL performed?"                    → price_performance (filter ticker, look at returns)
+#   "Best stocks in Technology sector?"          → industry_scores (filter sector, sort by composite)
+#   "Which stocks have strong fundamentals?"     → fundamental_scores (sort by fundamentals_score)
+#   "Show me momentum leaders"                   → technical_scores (sort by momentum_score)
+#   "Risk-adjusted performance screening"        → price_performance (use risk-adjusted measures)
+#   "Sector rotation signals"                    → industry_scores (compare sector averages over time)
+#   "Rank all stocks by composite score"         → composite_scores (sort by any composite variant)
+#   "Stocks near all-time highs"                 → price_performance (filter small drawdown_pct)
+#   "Most volatile stocks"                       → price_performance (sort by volatility)
+
+# =============================================================================
+# TECHNICAL SCORES
+# Grain: one row per ticker per trading day
+# Score range: 0-100 (higher = more bullish technical posture)
+# =============================================================================
+
+technical_scores:
+  table: mart_sp500_technical_scores
+  description: >
+    Daily technical analysis scores for every S&P 500 stock, scored 0-100.
+    Combines four signal families: trend confirmation (SMA alignment, 40pts),
+    momentum quality (RSI regime, 30pts), price action (volatility-adjusted moves, 20pts),
+    and MACD signal (histogram direction, 10pts).
+    USE THIS MODEL to confirm entry/exit timing, detect trend reversals, screen for
+    momentum breakouts, or identify technically oversold/overbought conditions.
+    A score above 70 signals strong bullish alignment across indicators;
+    below 30 signals broad technical weakness or a potential bottoming pattern.
+    Best combined with fundamental_scores for conviction, or price_performance for risk context.
+  dimensions:
+    ticker:
+      expr: _.TICKER
+      description: "Stock ticker symbol (e.g., AAPL, MSFT). Use to filter or group by individual stock."
+    date:
+      expr: _.DATE
+      description: "Trading date. Use to filter a specific date or date range, or to track score evolution over time."
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+  measures:
+    avg_technical_score:
+      expr: _.TECHNICAL_SCORE.mean()
+      description: >
+        Average composite technical score (0-100) across the selected stocks and dates.
+        Represents the overall technical health of the filtered universe.
+        Values above 60 suggest the universe is in a broadly bullish technical regime;
+        below 40 suggests widespread technical deterioration.
+        Useful for gauging market-wide technical sentiment when applied without ticker filters.
+    max_technical_score:
+      expr: _.TECHNICAL_SCORE.max()
+      description: >
+        Highest technical score in the filtered set. Identifies the single strongest
+        technical setup. Useful for screening: filter to latest date, then find the
+        ticker with max score to discover the strongest momentum name.
+    min_technical_score:
+      expr: _.TECHNICAL_SCORE.min()
+      description: >
+        Lowest technical score in the filtered set. Identifies the weakest technical
+        setup — potential turnaround candidates if fundamentals are strong, or
+        stocks to avoid if seeking momentum.
+    std_technical_score:
+      expr: _.TECHNICAL_SCORE.std()
+      description: >
+        Standard deviation of technical scores across the filtered set.
+        High dispersion (>20) indicates a stock-picker's market where technical
+        conditions vary widely. Low dispersion (<10) suggests uniform trend behavior,
+        typical of strong bull or bear regimes where most stocks move together.
+    avg_trend_score:
+      expr: _.TREND_SCORE.mean()
+      description: >
+        Average trend confirmation score (0-40). Measures alignment of short- and
+        long-term moving averages (SMA-30 vs SMA-200). High values (>30) indicate
+        price is well above key moving averages with bullish crossover confirmed.
+        Low values (<10) indicate price is below moving averages — downtrend or consolidation.
+    avg_momentum_score:
+      expr: _.MOMENTUM_SCORE.mean()
+      description: >
+        Average momentum quality score (0-30). Based on RSI regime classification.
+        High values (>22) indicate RSI is in bullish territory (50-70) with healthy
+        momentum. Low values (<8) indicate oversold conditions or fading momentum.
+        Useful for distinguishing trending stocks from mean-reverting ones.
+    avg_price_action_score:
+      expr: _.PRICE_ACTION_SCORE.mean()
+      description: >
+        Average price action score (0-20). Evaluates recent price moves relative to
+        volatility context. High values indicate strong, clean price advances with
+        low noise. Low values indicate choppy, indecisive price action or sharp
+        declines. Useful for identifying clean breakout patterns vs. noisy consolidation.
+    avg_macd_score:
+      expr: _.MACD_SCORE.mean()
+      description: >
+        Average MACD signal score (0-10). Based on MACD histogram direction and
+        signal line crossovers. High values indicate positive and expanding MACD —
+        confirming momentum acceleration. Low values indicate bearish MACD crossover.
+        Smallest weight (10pts) because MACD is a lagging confirmation indicator.
+    ticker_count:
+      expr: _.TICKER.nunique()
+      description: >
+        Number of distinct stocks in the filtered result. Useful for verifying
+        universe coverage (expect ~500 for full S&P 500) or counting how many
+        stocks pass a score threshold filter.
+    observation_count:
+      expr: _.count()
+      description: >
+        Total number of ticker-date observations. Divide by ticker_count to get
+        the average number of trading days per stock in the result. Useful for
+        verifying data completeness or estimating date range coverage.
+
+# =============================================================================
+# FUNDAMENTAL SCORES
+# Grain: one row per ticker per fiscal year end date
+# Score range: 0-100 (higher = stronger fundamentals)
+# =============================================================================
+
+fundamental_scores:
+  table: mart_sp500_fundamental_scores
+  description: >
+    Annual fundamental quality scores for S&P 500 stocks, scored 0-100.
+    Built from audited financial statements with four pillars: profitability quality
+    (margins + ROE, 25pts), growth momentum (revenue + earnings growth, 30pts),
+    financial health (leverage + liquidity, 25pts), and cash flow quality
+    (operating cash vs. earnings, 20pts).
+    USE THIS MODEL for long-term quality investing, value screening, identifying
+    companies with durable competitive advantages, or filtering out financially
+    distressed stocks. Scores are annual — they change slowly and reflect structural
+    business quality rather than daily market sentiment.
+    A score above 75 indicates an elite fundamental profile (top-quartile quality);
+    below 35 indicates fundamental weakness that warrants caution regardless of
+    technical strength. Pair with technical_scores for timing quality entries.
+  dimensions:
+    ticker:
+      expr: _.TICKER
+      description: "Stock ticker symbol. Use to filter to a specific company or compare a set of companies."
+    date:
+      expr: _.DATE
+      description: "Fiscal year end date (e.g., 2024-12-31 for calendar-year filers). Use to filter by reporting period."
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+    fiscal_year:
+      expr: _.FISCAL_YEAR
+      description: "Fiscal year as integer (e.g., 2024). Use to compare year-over-year fundamental improvement or deterioration."
+  measures:
+    avg_fundamentals_score:
+      expr: _.FUNDAMENTALS_SCORE.mean()
+      description: >
+        Average composite fundamentals score (0-100). Represents overall financial
+        quality of the filtered universe. When applied across all tickers for one
+        fiscal year, indicates whether the S&P 500 is fundamentally healthy (>55)
+        or showing stress (<45). For individual stocks, scores above 70 indicate
+        strong quality; below 40 indicates fundamental weakness.
+    max_fundamentals_score:
+      expr: _.FUNDAMENTALS_SCORE.max()
+      description: >
+        Highest fundamentals score in the filtered set. Identifies the single
+        strongest fundamental profile — the quality leader. Useful for
+        best-in-class screening within a sector or industry.
+    min_fundamentals_score:
+      expr: _.FUNDAMENTALS_SCORE.min()
+      description: >
+        Lowest fundamentals score in the filtered set. Identifies the weakest
+        fundamental profile — potential value traps or turnaround situations.
+    std_fundamentals_score:
+      expr: _.FUNDAMENTALS_SCORE.std()
+      description: >
+        Standard deviation of fundamentals scores. High dispersion within a sector
+        indicates wide quality variance — opportunity for stock selection. Low
+        dispersion suggests the sector has uniformly strong or weak fundamentals.
+    avg_profitability_score:
+      expr: _.PROFITABILITY_SCORE.mean()
+      description: >
+        Average profitability quality score (0-25). Evaluates gross margin, operating
+        margin, net margin, and return on equity. High values (>18) indicate
+        pricing power and operational efficiency — hallmarks of competitive moats.
+        Low values (<8) suggest commoditized business or margin pressure.
+    avg_growth_score:
+      expr: _.GROWTH_SCORE.mean()
+      description: >
+        Average growth momentum score (0-30). Measures revenue growth, earnings
+        growth, and growth consistency. High values (>22) indicate accelerating
+        or sustained growth. Low values (<10) indicate stagnation or contraction.
+        Largest weight (30pts) because growth drives long-term returns.
+    avg_financial_health_score:
+      expr: _.FINANCIAL_HEALTH_SCORE.mean()
+      description: >
+        Average financial health score (0-25). Evaluates balance sheet strength
+        via current ratio and debt-to-equity. High values (>18) indicate conservative
+        leverage and strong liquidity — resilient in downturns. Low values (<8)
+        indicate high leverage risk. Especially important during rising rate environments.
+    avg_cash_quality_score:
+      expr: _.CASH_QUALITY_SCORE.mean()
+      description: >
+        Average cash flow quality score (0-20). Measures whether reported earnings
+        are backed by real cash generation. High values (>15) indicate earnings
+        are cash-backed — high quality. Low values (<6) indicate accrual-heavy
+        earnings that may not be sustainable. Critical for detecting accounting red flags.
+    avg_gross_margin:
+      expr: _.GROSS_MARGIN.mean()
+      description: >
+        Average gross margin (0.0-1.0 scale, e.g., 0.45 = 45%). Measures pricing power
+        and cost structure efficiency. Software/pharma typically >60%; retail/manufacturing
+        typically 20-40%. Declining gross margins signal competitive pressure or input cost inflation.
+    avg_operating_margin:
+      expr: _.OPERATING_MARGIN.mean()
+      description: >
+        Average operating margin (0.0-1.0 scale). Reflects operational efficiency after
+        SGA and R&D expenses. Expanding operating margins indicate operating leverage;
+        contracting margins indicate cost growth outpacing revenue.
+    avg_net_margin:
+      expr: _.NET_MARGIN.mean()
+      description: >
+        Average net profit margin (0.0-1.0 scale). The bottom-line profitability after
+        all expenses, taxes, and interest. Compare across peers — wide variance within
+        an industry reveals operational quality differences.
+    avg_return_on_equity:
+      expr: _.RETURN_ON_EQUITY.mean()
+      description: >
+        Average return on equity (ROE). Measures how efficiently a company generates
+        profit from shareholder equity. ROE above 15% is generally strong; above 25%
+        is exceptional. Very high ROE (>40%) may indicate high leverage rather than
+        operational excellence — cross-check with debt_to_equity.
+    avg_current_ratio:
+      expr: _.CURRENT_RATIO.mean()
+      description: >
+        Average current ratio (current assets / current liabilities). Values above 1.5
+        indicate comfortable short-term liquidity. Below 1.0 indicates potential
+        difficulty meeting near-term obligations. Especially important for capital-intensive
+        or cyclical businesses.
+    avg_debt_to_equity:
+      expr: _.DEBT_TO_EQUITY.mean()
+      description: >
+        Average debt-to-equity ratio. Measures financial leverage. Below 0.5 is conservative;
+        0.5-1.5 is moderate; above 2.0 is highly leveraged. High leverage amplifies both
+        gains and losses. Compare within industry — utilities and REITs naturally carry
+        higher leverage than tech companies.
+    avg_revenue_growth_yoy:
+      expr: _.REVENUE_GROWTH_YOY.mean()
+      description: >
+        Average year-over-year revenue growth rate (e.g., 0.15 = 15% growth).
+        The top-line growth engine. Positive and accelerating growth commands premium
+        valuations. Negative growth signals structural challenges. Compare vs. industry
+        average to assess relative growth positioning.
+    ticker_count:
+      expr: _.TICKER.nunique()
+      description: "Number of distinct stocks in the result set. Expect ~500 for full S&P 500 universe."
+
+# =============================================================================
+# COMPOSITE SCORES
+# Grain: one row per ticker per trading day (technical_date)
+# Score range: 0-100 for each weighting variant
+# =============================================================================
+
+composite_scores:
+  table: mart_sp500_composite_scores
+  description: >
+    Daily blended scores combining technical analysis (daily) with fundamental quality
+    (annual, forward-filled). Offers three weighting variants: equal (50/50),
+    technical-bias (60/40), and fundamental-bias (40/60).
+    USE THIS MODEL for holistic stock ranking, screening, and portfolio construction.
+    The equal-weight variant is the default recommendation for balanced screening.
+    Use technical-bias during trending markets where momentum matters more.
+    Use fundamental-bias during volatile or uncertain markets where quality provides safety.
+    To rank stocks: filter to latest technical_date, sort by chosen composite variant descending.
+    Top-decile stocks (score >80) represent the strongest combined profiles.
+    Bottom-decile stocks (score <20) are weak on both dimensions.
+  dimensions:
+    ticker:
+      expr: _.TICKER
+      description: "Stock ticker symbol. Filter to a specific stock or set of stocks for comparison."
+    technical_date:
+      expr: _.TECHNICAL_DATE
+      description: "Trading date of the technical score component. This is the effective date of the composite — use this for time filtering."
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+    fiscal_year:
+      expr: _.FISCAL_YEAR
+      description: "Fiscal year of the matched fundamental score. Shows which annual financials underpin the composite. Useful for understanding the fundamental data vintage."
+  measures:
+    avg_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.mean()
+      description: >
+        Average 50/50 composite score (0-100). Equal blend of technical and fundamental
+        scores. The most balanced and recommended default for general screening.
+        When averaged across all tickers for a date, indicates overall market quality
+        (>55 = healthy, <45 = stressed). For individual stocks, >70 = strong conviction,
+        <30 = weak on both dimensions.
+    max_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.max()
+      description: >
+        Highest 50/50 composite score in the filtered set. The single best-ranked
+        stock by balanced criteria. Useful for identifying the top pick on any given date.
+    min_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.min()
+      description: >
+        Lowest 50/50 composite score. The weakest stock by balanced criteria.
+        Useful for identifying the bottom of the ranking or worst-in-class within a group.
+    std_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.std()
+      description: >
+        Score dispersion across the filtered universe. High dispersion (>18) means
+        wide differentiation between winners and losers — strong stock-selection
+        opportunity. Low dispersion (<8) means scores are clustered — harder to
+        differentiate, suggesting a regime where most stocks move together.
+    avg_composite_technical_bias:
+      expr: _.COMPOSITE_SCORE_TECHNICAL_BIAS.mean()
+      description: >
+        Average 60/40 composite score (60% technical, 40% fundamental).
+        Overweights momentum and trend signals. Best used in trending or low-volatility
+        markets where technical signals are more reliable. Divergence from equal-weight
+        variant reveals whether technical or fundamental factors are driving scores.
+    avg_composite_fundamental_bias:
+      expr: _.COMPOSITE_SCORE_FUNDAMENTAL_BIAS.mean()
+      description: >
+        Average 40/60 composite score (40% technical, 60% fundamental).
+        Overweights business quality. Best used during high-volatility or bear markets
+        where quality provides downside protection. Stocks scoring high here but low on
+        technical-bias may be quality names in temporary technical weakness — potential
+        buying opportunities.
+    avg_technical_score:
+      expr: _.TECHNICAL_SCORE.mean()
+      description: >
+        Average technical score component (0-100) before blending. Compare this with
+        avg_fundamentals_score to understand whether the composite is being driven
+        by technical strength or fundamental quality.
+    avg_fundamentals_score:
+      expr: _.FUNDAMENTALS_SCORE.mean()
+      description: >
+        Average fundamentals score component (0-100) before blending. When this diverges
+        significantly from avg_technical_score, it reveals a technical-fundamental
+        disconnect — either a quality stock in a temporary downtrend (buy opportunity)
+        or a weak stock riding momentum (potential trap).
+    ticker_count:
+      expr: _.TICKER.nunique()
+      description: "Number of distinct stocks scored. Verify universe completeness (~500 for full S&P 500)."
+    observation_count:
+      expr: _.count()
+      description: "Total ticker-date observations. Useful for validating data coverage across the selected time range."
+
+# =============================================================================
+# INDUSTRY SCORES
+# Grain: one row per ticker per trading day (technical_date)
+# Enriched with company name, GICS sector, and sub-industry
+# =============================================================================
+
+industry_scores:
+  table: mart_sp500_industry_scores
+  description: >
+    Daily composite scores enriched with company name, GICS sector, and sub-industry
+    classification. The most versatile model for sector-level analysis, peer comparison,
+    and top-down stock screening.
+    USE THIS MODEL for: sector rotation analysis (compare avg scores across sectors over time),
+    best-in-sector screening (filter sector, sort by composite), peer group comparison
+    (filter industry, compare tickers), identifying sector dispersion (high std = stock
+    picking opportunity within that sector), and building watchlists by sector/industry.
+    To find sector rotation signals: group by sector, track avg_composite_equal over time —
+    rising sectors are attracting momentum; falling sectors are losing leadership.
+    To find the best stock in a sector: filter sector + latest date, sort by composite descending.
+  dimensions:
+    ticker:
+      expr: _.TICKER
+      description: "Stock ticker symbol. Use to filter to individual stocks or a custom watchlist."
+    company_name:
+      expr: _.COMPANY_NAME
+      description: "Full company name (e.g., 'Apple Inc.'). Useful for display in results and natural-language responses."
+    sector:
+      expr: _.SECTOR
+      description: >
+        GICS sector classification (e.g., Information Technology, Health Care, Financials).
+        11 sectors total. Use to group by sector for rotation analysis, or filter to a
+        specific sector for within-sector screening.
+    industry:
+      expr: _.INDUSTRY
+      description: >
+        GICS sub-industry classification (e.g., Semiconductors, Pharmaceuticals).
+        More granular than sector — use for true peer comparison. Stocks in the same
+        industry face similar competitive dynamics and should be compared against each other.
+    technical_date:
+      expr: _.TECHNICAL_DATE
+      description: "Trading date. Filter to latest date for current rankings, or use date ranges for trend analysis."
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+    fiscal_year:
+      expr: _.FISCAL_YEAR
+      description: "Fiscal year of the underlying fundamental score. Indicates the vintage of fundamental data in the composite."
+  measures:
+    avg_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.mean()
+      description: >
+        Average 50/50 composite score for the filtered group. When grouped by sector,
+        this becomes the sector average composite — use to compare sector strength.
+        When grouped by industry, it becomes the peer-group average. Rising sector
+        averages indicate improving leadership; falling averages signal sector rotation away.
+    max_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.max()
+      description: >
+        Highest composite score in the group. When filtered to a sector, identifies
+        the sector leader. When filtered to a date, identifies the market leader.
+        The gap between max and avg reveals how much the best stock outperforms its peers.
+    min_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.min()
+      description: >
+        Lowest composite score in the group. Identifies the laggard. The gap between
+        min and avg reveals how much the worst stock underperforms. A large max-min
+        spread indicates high within-group dispersion — opportunity for stock selection.
+    std_composite_equal:
+      expr: _.COMPOSITE_SCORE_EQUAL.std()
+      description: >
+        Score dispersion within the filtered group. When grouped by sector, high
+        dispersion (>18) means wide quality variance within that sector — fertile
+        ground for stock picking. Low dispersion (<8) means the sector moves as a
+        block — better to make sector-level bets than individual stock bets.
+    avg_composite_technical_bias:
+      expr: _.COMPOSITE_SCORE_TECHNICAL_BIAS.mean()
+      description: >
+        Average 60/40 composite (technical-heavy). Compare with avg_composite_fundamental_bias
+        at the sector level: if technical-bias is much higher, the sector is riding
+        momentum without fundamental support (potential fragility). If fundamental-bias
+        is higher, the sector has quality but lacks market recognition (potential opportunity).
+    avg_composite_fundamental_bias:
+      expr: _.COMPOSITE_SCORE_FUNDAMENTAL_BIAS.mean()
+      description: >
+        Average 40/60 composite (fundamental-heavy). Sectors with high fundamental-bias
+        scores but low technical-bias scores are quality sectors in temporary disfavor —
+        classic value/contrarian opportunities. The reverse pattern suggests momentum
+        without substance.
+    avg_technical_score:
+      expr: _.TECHNICAL_SCORE.mean()
+      description: >
+        Average raw technical score for the group. When compared across sectors,
+        reveals which sectors have the strongest price momentum and trend alignment.
+        Useful for identifying sector rotation: the sector with the fastest-rising
+        avg_technical_score is gaining market leadership.
+    avg_fundamentals_score:
+      expr: _.FUNDAMENTALS_SCORE.mean()
+      description: >
+        Average raw fundamentals score for the group. Reveals structural quality
+        differences between sectors. Technology and Healthcare typically score higher;
+        Utilities and Real Estate may score lower on growth but higher on stability.
+    ticker_count:
+      expr: _.TICKER.nunique()
+      description: >
+        Number of distinct stocks in the group. When grouped by sector, shows sector
+        representation in the S&P 500. When combined with score filters, shows how
+        many stocks pass the screening criteria.
+    sector_count:
+      expr: _.SECTOR.nunique()
+      description: "Number of distinct sectors represented. Should be 11 for full S&P 500 coverage. Fewer indicates a filtered or concentrated result."
+
+# =============================================================================
+# PRICE PERFORMANCE
+# Grain: one row per ticker per trading day
+# Enriched with company name, GICS sector, and sub-industry
+# =============================================================================
+
+price_performance:
+  table: mart_sp500_price_performance
+  description: >
+    Daily price performance, returns, volatility, and drawdown metrics for every
+    S&P 500 stock, enriched with company and sector metadata.
+    USE THIS MODEL for: performance attribution (who gained/lost the most),
+    risk screening (volatility and drawdown analysis), momentum identification
+    (rolling returns), regime detection (comparing short vs long-term returns),
+    and recovery analysis (drawdown from peak).
+    Key patterns to detect:
+    - Momentum: high rolling_30d_return + high rolling_90d_return = sustained momentum
+    - Mean reversion setup: low rolling_30d_return + high rolling_1y_return = short-term pullback in long-term uptrend
+    - Regime shift: rolling_30d_return diverging from rolling_1y_return signals trend change
+    - Risk-off: high volatility + deep drawdown = stress regime
+    - Near all-time high: drawdown_pct close to 0 = price near peak
+    Best paired with industry_scores to combine performance with scoring context.
+  dimensions:
+    ticker:
+      expr: _.TICKER
+      description: "Stock ticker symbol. Filter to individual stocks for detailed performance analysis, or leave unfiltered for universe-wide screening."
+    company_name:
+      expr: _.COMPANY_NAME
+      description: "Full company name. Use for display and natural-language context in responses."
+    sector:
+      expr: _.SECTOR
+      description: >
+        GICS sector. Group by sector to compare sector-level performance, identify
+        sector rotation patterns, or find the best-performing sector over a time period.
+    industry:
+      expr: _.INDUSTRY
+      description: >
+        GICS sub-industry. Group by industry for true peer performance comparison.
+        Performance dispersion within an industry reveals stock-specific alpha vs. sector beta.
+    date:
+      expr: _.DATE
+      description: "Trading date. Filter to latest date for current snapshot, or use date ranges for trend and time-series analysis."
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+  measures:
+    avg_daily_return:
+      expr: _.DAILY_RETURN.mean()
+      description: >
+        Average single-day return across the filtered set. When applied to the full
+        universe for one date, approximates the market's daily move. When applied to
+        one ticker over many dates, shows the average daily gain/loss. Multiply by 252
+        for a rough annualized return estimate.
+    avg_cumulative_return:
+      expr: _.CUMULATIVE_RETURN.mean()
+      description: >
+        Average cumulative return since each stock's first available date. When filtered
+        to a single ticker and date, gives that stock's total return since inception in
+        the dataset. When averaged across tickers, shows the universe's average total return.
+        Useful for long-horizon performance comparison.
+    latest_cumulative_return:
+      expr: _.CUMULATIVE_RETURN.max()
+      description: >
+        Maximum cumulative return value in the filtered set. When filtered to a single
+        ticker and a specific date, this gives the exact cumulative return for that stock
+        on that date. Useful for answering "how much has AAPL returned since [start date]?"
+    avg_rolling_30d_return:
+      expr: _.ROLLING_30D_RETURN.mean()
+      description: >
+        Average 30-day rolling return (~1.5 calendar months of trading days). The primary
+        short-term momentum indicator. Positive and rising values indicate near-term strength.
+        Negative values indicate short-term weakness. Compare across sectors to identify
+        which sectors are leading in the near term. When this diverges from rolling_1y_return,
+        it signals a potential regime change.
+    avg_rolling_90d_return:
+      expr: _.ROLLING_90D_RETURN.mean()
+      description: >
+        Average 90-day rolling return (~4 calendar months). Medium-term momentum indicator.
+        Bridges the gap between short-term noise (30d) and long-term trend (1y). Useful for
+        identifying stocks in sustained multi-month rallies or declines. A stock with positive
+        90d return but negative 30d return may be experiencing a healthy pullback within an uptrend.
+    avg_rolling_1y_return:
+      expr: _.ROLLING_1Y_RETURN.mean()
+      description: >
+        Average 252-day rolling return (~1 calendar year). Long-term performance benchmark.
+        Positive values indicate the stock has gained over the past year; negative indicates
+        a losing position. Useful for separating structural winners from losers. When the
+        universe average is strongly positive (>15%), the market is in a bull regime;
+        strongly negative (<-10%) indicates a bear regime.
+    avg_volatility_30d:
+      expr: _.ROLLING_30D_VOLATILITY.mean()
+      description: >
+        Average 30-day rolling volatility (standard deviation of daily returns).
+        Measures price uncertainty and risk. Higher volatility means wider daily swings
+        and more risk. Annualize by multiplying by sqrt(252) for comparison with standard
+        risk metrics. Values above 0.03 (daily) ≈ 48% annualized are high-volatility;
+        below 0.01 (daily) ≈ 16% annualized is low-volatility. Useful for constructing
+        risk-adjusted screens and identifying volatility regime shifts.
+    positive_return_rate:
+      expr: (_.DAILY_RETURN > 0).mean()
+      description: >
+        Proportion of trading days with positive returns (0.0-1.0 scale). A batting
+        average for the stock. Values above 0.54 indicate a persistent winner; below 0.46
+        indicates persistent decline. Useful for assessing consistency: a stock can have
+        high returns with low positive_return_rate (few big up days) or moderate returns
+        with high rate (many small gains). The latter pattern is typically more sustainable.
+    avg_risk_adjusted_return:
+      expr: (_.ROLLING_1Y_RETURN / _.ROLLING_30D_VOLATILITY).mean()
+      description: >
+        Average ratio of 1-year return to 30-day volatility — a Sharpe-like risk-adjusted
+        performance measure. Higher values indicate better return per unit of risk.
+        Stocks with high absolute returns AND high risk-adjusted returns are the strongest
+        candidates. Stocks with high returns but low risk-adjusted returns are achieving
+        gains through excessive risk-taking.
+    avg_drawdown:
+      expr: _.DRAWDOWN_PCT.mean()
+      description: >
+        Average drawdown percentage from each stock's running all-time high (always
+        negative or zero). Values near 0 mean stocks are trading near their peaks.
+        Deeply negative values (e.g., -0.30 = 30% below peak) indicate significant
+        price damage. Useful for identifying market stress levels and recovery potential.
+        During market corrections, this metric reveals which stocks are most affected.
+    max_drawdown:
+      expr: _.DRAWDOWN_PCT.min()
+      description: >
+        Maximum drawdown (the most negative value, representing the deepest peak-to-trough
+        decline) in the filtered set. The single worst drawdown experienced. Critical
+        risk metric — indicates the worst-case loss from peak. A max drawdown of -0.50
+        means the stock lost 50% from its high. Useful for risk management: screens that
+        exclude stocks with max drawdown beyond a threshold (e.g., >-20%) filter for
+        capital preservation.
+    avg_return_to_drawdown:
+      expr: (_.ROLLING_1Y_RETURN / _.DRAWDOWN_PCT.abs()).mean()
+      description: >
+        Average ratio of 1-year return to absolute drawdown. A recovery efficiency metric.
+        Values above 2.0 indicate returns significantly exceed the drawdown depth — strong
+        risk-reward. Values below 0.5 indicate the drawdown damage exceeds recent gains —
+        poor risk-reward. Useful for identifying stocks that deliver returns without deep
+        drawdowns (the ideal investment profile).
+    latest_close:
+      expr: _.CLOSE.max()
+      description: >
+        Maximum closing price in the filtered set. When filtered to a single ticker
+        and latest date, gives the current stock price. When filtered to a single ticker
+        across all dates, gives the all-time high closing price.
+    ticker_count:
+      expr: _.TICKER.nunique()
+      description: >
+        Number of distinct stocks in the result. Use to verify screening coverage
+        or count how many stocks pass performance/risk filters.
+    observation_count:
+      expr: _.count()
+      description: >
+        Total ticker-date observations. Divide by ticker_count for average trading
+        days per stock. Useful for verifying data completeness across the date range.

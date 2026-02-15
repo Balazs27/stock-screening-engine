@@ -21,3 +21,10 @@ models:
       - name: ticker
         data_tests:
           - not_null
+
+  - name: int_sp500_price_returns
+    description: "Intermediate table for S&P 500 price returns."
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null

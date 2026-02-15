@@ -19,6 +19,7 @@ src/__pycache__/
 src/api_clients/__pycache__/
 src/jobs/__pycache__/
 src/loaders/__pycache__/
+src/mcp/__pycache__/
 src/utils/__pycache__/
 
 ## Ignore dags directory files
