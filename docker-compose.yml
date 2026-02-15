@@ -1,0 +1,20 @@
+services:
+  superset:
+    build:
+      context: ./superset
+      dockerfile: Dockerfile
+    container_name: analytics-superset
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./superset/superset_config.py:/app/superset_home/superset_config.py
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-your-secret-key-change-in-production}
+      - SUPERSET_CONFIG_PATH=/app/superset_home/superset_config.py
+    command: >
+      bash -c "
+      superset db upgrade &&
+      superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin 2>/dev/null || true &&
+      superset init &&
+      superset run -h 0.0.0.0 -p 8088 --with-threads
+      "

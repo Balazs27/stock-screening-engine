@@ -30,8 +30,11 @@ dags/exampledag.py
 dags/stock_screening_dag.py
 dags/.airflowignore
 
-## airflow files
+## Airflow files
 airflow_settings.yaml
+
+## Superset metadata
+superset/*.db
 
 ## Ignore capstone project directory files (it just for reference)
 capstone_project/

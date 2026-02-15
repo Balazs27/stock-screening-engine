@@ -1,272 +1,277 @@
 # CLAUDE.md
 
-## Project Overview
+# Stock Screening & Scoring Engine
 
-**Project name:** Stock Screening & Scoring Engine
-**Purpose:** Build a production-style data platform that ingests financial data for S&P 500 companies, computes quantitative signals, scores each stock (0–100), and ranks them daily to surface top investment opportunities.
+## Project Purpose
 
-In plain terms: this system continuously watches hundreds of stocks, processes price and fundamentals data, and outputs a ranked list of stocks based on health, momentum, and risk signals.
+This project is a production-style analytics platform that:
 
-This repository is a **Analytics / Data Engineering capstone project**, designed to demonstrate real-world practices: modular ETL design, orchestration with Airflow, transformations with dbt, and analytics-ready data models in Snowflake.
+• Ingests financial data for S&P 500 companies  
+• Transforms and models the data using dbt  
+• Computes technical, fundamental, and composite stock scores  
+• Ranks stocks daily  
+• Enables AI-driven analysis via MCP + semantic layer  
+• Enables BI dashboards via Superset  
 
----
+In plain terms:
 
-## High-Level Architecture
+This system continuously evaluates the S&P 500 and surfaces the strongest stocks based on quantified signals across momentum, profitability, risk, and price behavior.
 
-```
-External Sources
-(Wikipedia, Polygon, FMP)
-        ↓
-Python ETL Jobs (src/jobs)
-        ↓
-Snowflake RAW / LOOKUP tables
-        ↓
-dbt (staging → intermediate → marts)
-        ↓
-Scoring & Ranking Tables
-```
+This repository demonstrates real-world:
 
-Key architectural principle:
-
-> One canonical universe definition (S&P 500) → all downstream pipelines depend on it.
+• Data Engineering  
+• Analytics Engineering  
+• Incremental modeling  
+• Orchestration  
+• AI integration  
+• BI enablement  
 
 ---
 
-## Data Sources
+# High-Level Architecture
 
-### 1. Wikipedia (Universe Definition)
-
-* Scrapes the official S&P 500 constituents list
-* Produces a **snapshot lookup table** in Snowflake
-* Contains ticker, company name, GICS sector/sub-industry, headquarters, CIK, founded year, etc.
-* This table is the **base dependency** for all other ETLs
-
-### 2. Polygon API
-
-* Market data (prices, volumes, indicators, news)
-* Filtered strictly to S&P 500 tickers from the lookup table
-
-### 3. FMP API
-
-* Fundamentals and financial statement data
-* Filtered to S&P 500 tickers
-* API access is active and configured via `.env`
-* Planned financial statement endpoints:
-
-  * Income Statement
-  * Balance Sheet Statement
-  * Cash Flow Statement
-  * Latest Financial Statements
-* These datasets will power **fundamental scoring models** (profitability, growth, leverage, cash flow quality)
+External Sources  
+(Wikipedia, Polygon, FMP)  
+        ↓  
+Python ETL Jobs (Airflow orchestrated)  
+        ↓  
+Snowflake (RAW layer)  
+        ↓  
+dbt (staging → intermediate → marts)  
+        ↓  
+Analytics Layer  
+    • Scoring models  
+    • Ranking models  
+    • Industry aggregation  
+    • Price performance models  
+        ↓  
+Access Layer  
+    • Superset dashboards  
+    • MCP Semantic Layer (Claude Desktop AI interface)
 
 ---
 
-## Repository Structure (Important for Claude)
+# Core Architectural Principles
 
-```
-stock-screening-engine/
-│
-├── dags/                  # Airflow DAGs (orchestration only)
-│   ├── etl/
-│   ├── dbt/
-│   └── stock_screening_dag.py
-│
-├── src/                   # Core Python code (business logic)
-│   ├── api_clients/       # External data access (NO Snowflake here)
-│   │   ├── wikipedia_client.py
-│   │   ├── polygon_client.py
-│   │   └── fmp_client.py
-│   │
-│   ├── loaders/           # Persistence layer (Snowflake writes only)
-│   │   └── snowflake_loader.py
-│   │
-│   ├── jobs/              # Executable ETL jobs (Airflow entrypoints)
-│   │   ├── ingest_sp500_universe.py
-│   │   ├── ingest_polygon_prices.py
-│   │   └── ingest_fmp_financials.py
-│   │
-│   ├── utils/             # Shared helpers (logging, dates, retries)
-│   │   ├── logging.py
-│   │   └── dates.py
-│   │
-│   └── __init__.py
-│
-├── dbt_project/           # dbt transformations
-│   ├── models/
-│   │   ├── staging/
-│   │   ├── intermediate/
-│   │   └── marts/
-│   ├── macros/
-│   ├── seeds/
-│   ├── snapshots/
-│   ├── dbt_project.yml
-│   ├── packages.yml
-│   └── profiles.yml
-│
-├── capstone_project/      # Legacy / original scripts (for refactoring)
-│   └── (original monolithic ETL scripts)
-│
-├── docker/
-├── tests/
-├── requirements.txt
-├── .env.example
-├── README.md
-└── CLAUDE.md
-```
+1. Canonical universe definition  
+   Wikipedia defines which stocks exist.
+
+2. Strict separation of concerns  
+   API access ≠ warehouse writes ≠ orchestration ≠ transformation.
+
+3. Snowflake is the source of truth.
+
+4. dbt defines analytical meaning.
+
+5. Airflow controls time.
+
+6. All daily-grain models are incremental and optimized for multi-year scale.
 
 ---
 
-## Design Rules (Very Important)
+# Snowflake Layout
 
-### Separation of Concerns
+Single shared database:
 
-**api_clients/**
+DATAEXPERT_STUDENT
 
-* Fetch data from external APIs or scrape websites
-* Handle auth, pagination, rate limits
-* Return pandas DataFrames or Python objects
-* ❌ Never connect to Snowflake
+Schema naming convention (dbt default behavior):
 
-**loaders/**
+{student_schema}  
+{student_schema}_stg  
+{student_schema}_int  
+{student_schema}_dims  
+{student_schema}_marts  
 
-* Own Snowflake connections and write logic
-* Create tables, delete partitions, insert data
-* ❌ Never call external APIs
+Example:
+BALAZSILLOVAI30823_MARTS
 
-**jobs/**
-
-* Glue layer
-* Orchestrates: fetch → load
-* This is what Airflow calls
-* Very thin, readable scripts
-
-**utils/**
-
-* Stateless helper functions
-* Logging, date handling, small utilities
+All analytical exposure (Superset + MCP) happens strictly from the MARTS schema.
 
 ---
 
-## Current State of the Project
+# dbt Modeling Layers
 
-* dbt project successfully migrated and validated (`dbt debug` passes)
-* Environment variables managed via `.env` / `.env.example`
-* Core dependencies installed via `requirements.txt`
-* Wikipedia S&P 500 scraper fully refactored into the modular ETL structure
-* Polygon ETL pipelines implemented for:
+## Staging (Views)
 
-  * Daily and backfill stock prices
-  * Daily and backfill news
-  * Daily and backfill RSI
-  * Daily and backfill MACD
-* FMP ETL pipelines implemented for:
+• Clean raw API data  
+• Standardize column names  
+• Enforce types  
+• No business logic  
 
-  * Income Statement
-  * Balance Sheet Statement
-  * Cash Flow Statement
-* All Polygon and FMP pipelines are orchestrated via Airflow DAGs
-* dbt staging models implemented for:
+## Intermediate (Tables, incremental where needed)
 
-  * Wikipedia, Polygon, and FMP raw data
-* dbt intermediate models implemented to combine technical indicators (SMA, RSI, MACD)
-* dbt mart models implemented to produce a **technical indicator score per ticker**
-* Original bootcamp / monolithic scripts remain in `capstone_project/` for reference and safe experimentation
+• Price returns
+• Technical indicators (SMA, RSI, MACD)
+• Daily price changes
+• Annual fundamentals with YoY growth
+• Rolling metrics (volatility, drawdown)
 
-At this stage, the platform can ingest **all data required for the current scoring algorithm** end‑to‑end.
+Optimized with lookback-window incremental filters for:
 
----
+• SMA-200
+• LAG functions
+• Rolling volatility
 
-## Airflow DAG Design
+## Dimensions
 
-Airflow is used **strictly for orchestration**, not business logic. All heavy lifting is done in `src/jobs/*`.
+dim_sp500_companies_current  
+Current snapshot of S&P 500 universe.
 
-### DAG Categories
+## Marts
 
-The project intentionally separates **daily operational DAGs** from **one-time or exceptional backfill DAGs**.
+### mart_sp500_technical_scores
+Daily technical scoring (0–100)
 
-#### Daily DAGs (Automated)
+### mart_sp500_fundamental_scores
+Annual fundamental scoring (0–100)
 
-* `sp500_lookup_dag.py`
-* `polygon_daily_prices_dag.py`
-* `polygon_daily_news_dag.py`
-* `polygon_daily_rsi_dag.py`
-* `polygon_daily_macd_dag.py`
+### mart_sp500_composite_scores
+Daily combined technical + fundamental scoring
 
-These DAGs:
+### mart_sp500_industry_scores
+Composite scores enriched with:
+• Company
+• Sector
+• Industry
 
-* Run daily
-* Depend on the latest available S&P 500 universe
-* Only fetch incremental data for the execution date
+Used for sector-level analytics.
 
-#### Backfill DAGs (Manual / Bounded)
+### mart_sp500_price_performance
+Daily:
+• Returns
+• Rolling returns
+• Volatility
+• Drawdown
+• YTD performance
 
-* `polygon_prices_backfill_dag.py`
-* `polygon_news_backfill_dag.py`
-* `polygon_rsi_backfill_dag.py`
-* `polygon_macd_backfill_dag.py`
-
-Backfill DAGs:
-
-* Use efficient range or large‑limit API calls
-* Are triggered manually
-* Do not attempt to reconstruct historical index membership
-
-#### Experimental / Evaluation DAGs
-
-* `fmp_news_daily_dag.py` (planned)
-
-This DAG exists to **compare FMP news coverage vs Polygon news**.
-Only one provider will be kept after evaluation.
+Enriched with company metadata.
 
 ---
 
-## Canonical Tables
+# Orchestration
 
-### sp500_tickers_lookup
+Airflow handles:
 
-* Source: Wikipedia
-* Grain: one row per ticker per snapshot date
-* Used as a lookup table for all downstream ETLs
+• Daily ETL pipelines
+• Backfill pipelines
+• dbt DAG (Cosmos-based)
+• ETL dependency gating via ExternalTaskSensor
+
+No business logic inside DAGs.
 
 ---
 
-## How Claude Should Help on This Project
+# MCP + Semantic Layer
+
+The project exposes selected mart tables via:
+
+src/mcp/mcp_server.py
+
+Whitelisted tables only.
+
+Semantic layer:
+semantic_layer.yaml
+
+Defines:
+• Dimensions
+• Measures
+• Time grains
+• Business descriptions
+• Derived metrics (YTD return, drawdown, etc.)
+
+This enables Claude Desktop to:
+
+• Answer analytical questions
+• Compare sectors
+• Identify leaders/laggards
+• Detect drawdown periods
+• Analyze cycles
+
+AI queries operate strictly on marts schema.
+
+---
+
+# Superset
+
+Superset is connected directly to Snowflake.
+
+Used for:
+
+• Exploratory analysis
+• Dashboards
+• Performance charts
+• Sector heatmaps
+• Risk analysis
+
+Connection uses:
+snowflake-sqlalchemy driver.
+
+---
+
+# Current System Capabilities
+
+The system can:
+
+• Backfill 3–5 years of daily stock data
+• Compute rolling technical indicators
+• Align fiscal-year fundamentals to daily prices
+• Compute composite weighted scores
+• Rank stocks daily
+• Analyze sector performance
+• Calculate volatility and drawdowns
+• Support AI narrative analytics via MCP
+• Visualize data in Superset
+
+---
+
+# Design Rules
 
 Claude should:
 
-* Follow the separation of concerns strictly
-* Prefer incremental refactors over rewrites
-* Keep Airflow DAGs thin (no business logic)
-* Reuse existing loaders and clients when possible
-* Assume Snowflake is the primary warehouse
-* Treat dbt as the transformation and modeling layer
-* Help migrate scripts from `capstone_project/` into `src/` modules
+• Respect incremental modeling logic
+• Avoid rewriting working pipelines
+• Keep API logic separate from warehouse logic
+• Keep DAGs thin
+• Keep marts analytics-ready
+• Assume Snowflake uppercase identifiers
+• Avoid cross-schema exposure
 
 Claude should NOT:
 
-* Introduce new tools unless clearly justified
-* Mix API logic with Snowflake logic
-* Add unnecessary abstractions
-* Break working pipelines for “cleanliness” alone
+• Introduce unnecessary tools
+• Mix orchestration and business logic
+• Bypass semantic layer for AI queries
+• Expose RAW/STG schemas to MCP
 
 ---
 
-## Future Extensions (Planned)
+# Future Product Vision
 
-* Daily scoring models (momentum, volatility, fundamentals)
-* Stock ranking marts in dbt
-* Backtesting logic
-* Feature-level documentation
-* Visualization layer
+Potential evolution:
+
+• Backtesting engine
+• Strategy simulation
+• Factor-based ranking
+• Regime detection (bull/bear cycle)
+• Risk-adjusted scoring
+• Portfolio optimizer
+• ML signal enhancement
+• Alternative data signals
+• Web UI for stock screening
 
 ---
 
-## Mental Model Summary
+# Mental Model
 
-> Wikipedia defines *what* stocks exist.
-> APIs define *what happens* to them.
-> Snowflake stores truth.
-> dbt defines meaning.
-> Airflow controls time.
+Wikipedia defines WHAT exists.  
+APIs define WHAT happens.  
+Snowflake stores TRUTH.  
+dbt defines MEANING.  
+Airflow controls TIME.  
+Superset shows INSIGHT.  
+MCP enables INTELLIGENCE.
 
-This document should be kept up to date as the system evolves.
+---
+
+This document must evolve with the platform.
