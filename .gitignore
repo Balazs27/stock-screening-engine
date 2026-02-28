@@ -1,6 +1,7 @@
 ## Ignore environment variable files
 .env
 .env.*
+!.env.example
 
 ## Ignore Python virtual environment directories
 venv/
@@ -21,6 +22,10 @@ src/jobs/__pycache__/
 src/loaders/__pycache__/
 src/mcp/__pycache__/
 src/utils/__pycache__/
+src/agents/__pycache__/
+src/agents/config/__pycache__/
+src/agents/core/__pycache__/
+src/agents/data/__pycache__/
 
 ## Ignore dags directory files
 dags/__pycache__/
@@ -35,6 +40,10 @@ airflow_settings.yaml
 
 ## Superset metadata
 superset/*.db
+
+## Pipeline output (generated artifacts)
+output/*
+!output/.gitkeep
 
 ## Ignore capstone project directory files (it just for reference)
 capstone_project/

@@ -10,3 +10,8 @@ pandas
 snowflake-snowpark-python
 boring-semantic-layer[mcp]
 ibis-framework[snowflake]
+PyYAML
+
+# Agent pipeline dependencies
+anthropic
+pydantic
