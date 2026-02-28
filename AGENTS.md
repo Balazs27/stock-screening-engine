@@ -1,4 +1,6 @@
-# CLAUDE.md — Stock Screening & Scoring Engine
+# AGENTS.md — Stock Screening & Scoring Engine
+
+Cross-tool context file (Cursor, Windsurf, Copilot Workspace). Mirrors CLAUDE.md.
 
 **NO HALF MEASURES. NO MVP. ONLY FULL PRODUCTION-GRADE ANALYTICS.**
 

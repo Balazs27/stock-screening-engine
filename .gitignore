@@ -38,3 +38,14 @@ superset/*.db
 
 ## Ignore capstone project directory files (it just for reference)
 capstone_project/
+
+# Agentic Workspace Context Files
+#CLAUDE.md
+#AGENTS.md
+#PROJECT_STRUCTURE.md
+#general_index.md
+#detailed_index.md
+#.claude/
+
+# .mcp.json
+.mcp.json
