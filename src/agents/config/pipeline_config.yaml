@@ -1,0 +1,39 @@
+# Pipeline Configuration — Stock Opportunity Pipeline
+# All tunable parameters for the daily agentic stock screening pipeline.
+# Override any value via PIPELINE_<SECTION>_<KEY> environment variables.
+
+# Universe: defines which stocks are candidates for analysis
+universe:
+  source_table: dim_sp500_companies_current  # S&P 500 dimension from dbt
+  schema_suffix: _MARTS                      # Snowflake schema suffix for mart tables
+
+# Scoring weights: how each signal category contributes to the opportunity score.
+# Must sum to exactly 1.0.
+scoring_weights:
+  technical_momentum: 0.25    # SMA alignment, RSI, MACD — trend and momentum signals
+  fundamental_quality: 0.20   # Profitability, growth, health, cash quality
+  price_trajectory: 0.20      # Recent return trajectory and drawdown profile
+  catalyst_strength: 0.20     # News-driven catalyst signal strength
+  sector_favorability: 0.15   # Relative sector positioning and rotation signal
+
+# Shortlist: filters applied after scoring to produce the final opportunity shortlist
+shortlist:
+  min_opportunity_score: 65.0   # Minimum blended score (0-100) to qualify
+  max_drawdown_threshold: -0.20 # Maximum acceptable drawdown (e.g., -0.20 = -20%)
+  max_per_sector: 3             # Maximum stocks selected from any single sector
+  max_total: 15                 # Maximum total stocks in the shortlist
+
+# Agents: LLM model selection and retry configuration
+agents:
+  news_lookback_days: 7          # Days of news history to fetch per catalyst scan
+  catalyst_top_n: 50             # Number of top-scored stocks to run catalyst analysis on
+  thesis_model: claude-opus-4-6  # Model for investment thesis generation (highest quality)
+  analysis_model: claude-sonnet-4-6  # Model for scoring and analysis tasks
+  risk_model: claude-sonnet-4-6      # Model for risk assessment
+  max_retries: 2                     # LLM call retry attempts on transient failure
+  retry_base_delay_seconds: 1.0      # Base delay before first retry (doubles each attempt)
+
+# Output: report and artifact configuration
+output:
+  base_dir: output          # Directory where daily reports are written
+  pdf_orientation: portrait  # PDF page orientation (portrait or landscape)
