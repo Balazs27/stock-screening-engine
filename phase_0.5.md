@@ -34,7 +34,7 @@ Phase 0.5 delivers: earnings-driven catalyst detection, proper valuation scoring
 - **Why Phase 0.5 needs it:** Earnings events are the single highest-impact catalyst for stock price movement. Without them, the opportunity pipeline cannot flag upcoming catalysts or score post-earnings momentum.
 - **Primary Source:** FMP — provides both calendar and historical surprises with per-ticker granularity; Polygon does not offer earnings calendar data.
 - **Endpoint(s):**
-  - `GET /stable/earning-calendar?from={YYYY-MM-DD}&to={YYYY-MM-DD}&apikey={key}`
+  - `GET /stable/earnings-calendar?from={YYYY-MM-DD}&to={YYYY-MM-DD}&apikey={key}`
   - `GET /stable/earnings-surprises?symbol={ticker}&apikey={key}`
 - **Request pattern:**
   - Method: GET
@@ -449,6 +449,8 @@ Note: FRED returns `value` as string; `"."` indicates missing data (weekends/hol
 
 Validate by sampling a real API response during implementation. If endpoint returns 403/404, deprioritize and revisit with FINRA approach.
 
+**Implementation status:** NOT IMPLEMENTED. No client method, job, or DAG exists for short interest.
+
 ---
 
 ## Tier 2 — Options Implied Volatility Summary
@@ -488,59 +490,59 @@ Validate by sampling a real API response during implementation. If endpoint retu
 
 Note: This is a derived/aggregated schema. The raw Polygon response contains per-contract data. Validate raw response shape and build aggregation logic during implementation.
 
+**Implementation status:** NOT IMPLEMENTED. No client method, job, or DAG exists for options IV. Requires Polygon Options subscription.
+
 ---
 
 ## Tier 2 — Insider Trades & Institutional Holdings (13F)
 
 - **What it is:** SEC Form 4 insider transactions (buys/sells by officers, directors, 10%+ holders) and quarterly 13F institutional holding snapshots showing large-fund positions.
 - **Why Phase 0.5 needs it:** Insider buying is a strong bullish signal (insiders risk their own capital). Institutional ownership changes indicate smart-money conviction. Both add an ownership dimension to the scoring model.
-- **Primary Source:** FMP — provides both insider trading and institutional holder endpoints with per-ticker access, fitting the existing `_fetch_batch()` pattern; SEC EDGAR is the raw source but requires complex filing parsing.
-- **Endpoint(s):**
-  - `GET /stable/insider-trading?symbol={ticker}&limit=100&apikey={key}`
-  - `GET /stable/institutional-holder?symbol={ticker}&apikey={key}`
+- **Primary Source:** FMP — provides insider trading via paginated global feed endpoints; SEC EDGAR is the raw source but requires complex filing parsing.
+- **Endpoint(s) — Insider Trades (IMPLEMENTED):**
+  - `GET /stable/insider-trading/latest?page={p}&limit=100&apikey={key}` — paginated global feed
+  - `GET /stable/insider-trading/search?page={p}&limit=100&apikey={key}` — paginated search feed
+  - **Note:** The per-ticker endpoint `/stable/insider-trading?symbol={ticker}` does NOT exist in FMP. It returns empty `[]` silently.
+- **Endpoint(s) — Institutional Holdings (NOT YET IMPLEMENTED):**
+  - The per-ticker endpoint `/stable/institutional-holder?symbol={ticker}` does NOT exist in FMP.
+  - Alternative endpoints identified but not yet built: `/stable/institutional-ownership/extract-analytics/holder`, `/stable/institutional-ownership/symbol-positions-summary`, `/stable/institutional-ownership/extract` (CIK-based), `/stable/institutional-ownership/holder-performance-summary` (CIK-based), `/stable/institutional-ownership/holder-industry-breakdown` (CIK-based).
 - **Request pattern:**
   - Method: GET
-  - Per-ticker; use `_fetch_batch()` for each endpoint across S&P 500 universe
+  - Insider trades: paginated global feed (NOT per-ticker); filter results to S&P 500 tickers post-fetch
   - Rate limit: use repo standard FMP rate-limit guards (0.1s/req)
-  - Note: 2 endpoints x ~500 tickers = ~1,000 requests per refresh (~1.7 min)
 - **Grain & cadence:**
-  - Insider trades grain: (ticker, filing_date, reporting_name, transaction_type) — one row per insider per transaction
-  - Institutional holders grain: (ticker, holder, date_reported) — one row per holder per ticker per quarter
+  - Insider trades grain: (symbol, filing_date, reporting_name, transaction_type) — one row per insider per transaction
+  - Institutional holders grain: TBD (depends on which endpoints are implemented)
   - Refresh: daily for insider trades (SEC filings arrive continuously), quarterly for 13F
-  - Backfill: 5 years for insider trade pattern analysis; 5 years for 13F trends
-- **Join keys:** `ticker`
-- **Raw tables:** `sp500_insider_trades`, `sp500_institutional_holders`
+  - Backfill: 5 years for insider trade pattern analysis via deep pagination
+- **Join keys:** `ticker` / `symbol`
+- **Raw tables:** `sp500_insider_trades`, `sp500_insider_trades_search`
 - **JSON output schema:**
 
-**Insider Trades** (expected_schema):
+**Insider Trades** (actual schema from `/stable/insider-trading/latest`):
 ```json
 [
   {
     "symbol": "string",
     "filingDate": "string (YYYY-MM-DD)",
     "transactionDate": "string (YYYY-MM-DD)",
-    "reportingName": "string",
+    "reportingCik": "string",
+    "companyCik": "string",
     "transactionType": "string (P-Purchase|S-Sale|...)",
     "securitiesOwned": "number",
+    "reportingName": "string",
+    "typeOfOwner": "string",
+    "acquisitionOrDisposition": "string (A|D)",
+    "directOrIndirect": "string (D|I)",
+    "formType": "string",
     "securitiesTransacted": "number",
     "price": "number | null",
-    "typeOfOwner": "string (officer|director|10percent|...)",
-    "link": "string (SEC filing URL)"
+    "securityName": "string",
+    "url": "string (SEC filing URL)"
   }
 ]
 ```
 
-**Institutional Holders** (expected_schema):
-```json
-[
-  {
-    "holder": "string",
-    "shares": "number",
-    "dateReported": "string (YYYY-MM-DD)",
-    "change": "number",
-    "changePercentage": "number | null"
-  }
-]
-```
-
-Validate by sampling a real API response during implementation.
+**Implementation status:**
+- Insider trades: IMPLEMENTED (2 endpoints, 2 daily jobs, 2 backfill jobs, 4 DAGs)
+- Institutional holdings: NOT IMPLEMENTED (5 alternative endpoints identified, 0 built)

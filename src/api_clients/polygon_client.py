@@ -454,3 +454,138 @@ class PolygonClient:
 
         results = self._fetch_batch(tickers, _fetch_one, label="articles")
         return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Ticker Details (per-ticker reference data)
+    # --------------------------------------------------
+
+    def fetch_ticker_details(
+        self, tickers: list[str], run_date: str
+    ) -> pd.DataFrame:
+        """Fetch ticker details (market cap, shares outstanding) for a list of tickers.
+
+        Note: Unlike other Polygon endpoints, /v3/reference/tickers/{ticker}
+        returns a single object (not an array). Each ticker yields exactly one row.
+
+        Args:
+            tickers: List of ticker symbols.
+            run_date: Date string (YYYY-MM-DD) used as the snapshot date.
+
+        Returns:
+            DataFrame with columns: ticker, name, market, locale, primary_exchange,
+            type, active, currency_name, cik, market_cap, share_class_shares_outstanding,
+            weighted_shares_outstanding, list_date, sic_code, sic_description,
+            total_employees, homepage_url, description, date, extracted_at.
+            Empty DataFrame if no data.
+        """
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/v3/reference/tickers/{ticker}"
+                f"?apiKey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if data.get("status") != "OK" or not data.get("results"):
+                return []
+            r = data["results"]
+            extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            return [{
+                "ticker": r.get("ticker", ticker),
+                "name": r.get("name"),
+                "market": r.get("market"),
+                "locale": r.get("locale"),
+                "primary_exchange": r.get("primary_exchange"),
+                "type": r.get("type"),
+                "active": r.get("active"),
+                "currency_name": r.get("currency_name"),
+                "cik": r.get("cik"),
+                "market_cap": r.get("market_cap"),
+                "share_class_shares_outstanding": r.get("share_class_shares_outstanding"),
+                "weighted_shares_outstanding": r.get("weighted_shares_outstanding"),
+                "list_date": r.get("list_date"),
+                "sic_code": r.get("sic_code"),
+                "sic_description": r.get("sic_description"),
+                "total_employees": r.get("total_employees"),
+                "homepage_url": r.get("homepage_url"),
+                "description": r.get("description"),
+                "date": run_date,
+                "extracted_at": extracted_at,
+            }]
+
+        results = self._fetch_batch(tickers, _fetch_one, label="ticker details")
+        return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Stock Snapshot (per-ticker)
+    # --------------------------------------------------
+
+    def fetch_stock_snapshot(
+        self, tickers: list[str], run_date: str
+    ) -> pd.DataFrame:
+        """Fetch stock snapshot data (session + last minute) for a list of tickers.
+
+        Endpoint: /v3/snapshot?ticker={ticker}
+        Returns session OHLCV, change, regular/early trading changes, and last minute bar.
+
+        Args:
+            tickers: List of ticker symbols.
+            run_date: Date string (YYYY-MM-DD) used as snapshot date.
+
+        Returns:
+            DataFrame with flattened session and last_minute fields, plus
+            ticker, name, type, market_status, date, extracted_at.
+        """
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/v3/snapshot"
+                f"?ticker={ticker}"
+                f"&apiKey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if data.get("status") != "OK" or not data.get("results"):
+                return []
+            extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rows = []
+            for r in data["results"]:
+                session = r.get("session", {})
+                last_minute = r.get("last_minute", {})
+                rows.append({
+                    "ticker": r.get("ticker", ticker),
+                    "name": r.get("name"),
+                    "type": r.get("type"),
+                    "market_status": r.get("market_status"),
+                    "session_change": session.get("change"),
+                    "session_change_percent": session.get("change_percent"),
+                    "session_early_trading_change": session.get("early_trading_change"),
+                    "session_early_trading_change_percent": session.get("early_trading_change_percent"),
+                    "session_regular_trading_change": session.get("regular_trading_change"),
+                    "session_regular_trading_change_percent": session.get("regular_trading_change_percent"),
+                    "session_close": session.get("close"),
+                    "session_high": session.get("high"),
+                    "session_low": session.get("low"),
+                    "session_open": session.get("open"),
+                    "session_volume": session.get("volume"),
+                    "session_previous_close": session.get("previous_close"),
+                    "session_price": session.get("price"),
+                    "session_vwap": session.get("vwap"),
+                    "last_minute_close": last_minute.get("close"),
+                    "last_minute_high": last_minute.get("high"),
+                    "last_minute_low": last_minute.get("low"),
+                    "last_minute_open": last_minute.get("open"),
+                    "last_minute_volume": last_minute.get("volume"),
+                    "last_minute_vwap": last_minute.get("vwap"),
+                    "last_minute_transactions": last_minute.get("transactions"),
+                    "date": run_date,
+                    "extracted_at": extracted_at,
+                })
+            return rows
+
+        results = self._fetch_batch(tickers, _fetch_one, label="stock snapshots")
+        return pd.DataFrame(results) if results else pd.DataFrame()

@@ -85,3 +85,57 @@ Long-term learnings and incident resolutions. Organized by symptom for fast retr
 ---
 
 *Add new entries below this line following the same template.*
+
+---
+
+## Entry 7: FMP Duplicate Method Name Bug
+
+**Symptom:** `fetch_fmp_articles` returning no data; news job silently loading general news data instead of FMP articles.
+
+**Cause:** Two Python methods with the same name `fetch_news` in `fmp_client.py`. Python silently uses the second definition, making the first (FMP articles) unreachable. No warning is raised at class definition time.
+
+**Solution:** Renamed first `def fetch_news` to `fetch_fmp_articles` (endpoint: `/stable/fmp-articles`). Renamed second `def fetch_news` to `fetch_general_news` (endpoint: `/stable/news/general-latest`). Renamed job files: `ingest_fmp_news.py` → `ingest_fmp_articles.py`, `ingest_fmp_global_news.py` → `ingest_fmp_general_news.py`. Renamed DAG file: `fmp_news_daily_dag.py` → `fmp_articles_daily_dag.py`.
+
+**Red Flags:** Always check for duplicate method names when adding new fetch methods to api clients. Python gives NO warning on duplicate method definitions in a class.
+
+**Preventative Guardrail:** After adding any new method to `fmp_client.py` or `polygon_client.py`, verify uniqueness: `grep -n "def fetch_" src/api_clients/fmp_client.py | awk '{print $2}' | sort | uniq -d`
+
+---
+
+## Entry 8: FMP Non-Existent Endpoint Pattern
+
+**Symptom:** `fetch_insider_trades` and `fetch_institutional_holders` returning empty DataFrames silently; no 404 error raised.
+
+**Cause:** Both methods used non-existent FMP endpoints (`/stable/insider-trading?symbol={ticker}` and `/stable/institutional-holder?symbol={ticker}`). FMP returns empty JSON `[]` for non-existent endpoints rather than 404.
+
+**Solution:** Removed both broken methods. Insider trades replaced with two paginated global feed endpoints (`fetch_insider_trades_latest` at `/stable/insider-trading/latest`, `fetch_insider_trades_search` at `/stable/insider-trading/search`). Institutional holdings methods were removed but not yet replaced — the five alternative institutional ownership endpoints identified in the plan have NOT been implemented yet.
+
+**Red Flags:** Any FMP endpoint that returns consistently empty data should be treated as potentially non-existent, not just "no data." Always verify endpoint existence against FMP API docs.
+
+**Preventative Guardrail:** Before implementing a new FMP endpoint, verify it against the comment block in `fmp_client.py`. The comments contain verified endpoint URLs with JSON response schemas.
+
+---
+
+## Entry 9: FMP News NoneType Crash on Null Symbol
+
+**Symptom:** `fetch_general_news`, `fetch_press_releases`, `fetch_stock_news` crash with `AttributeError: 'NoneType' object has no attribute 'strip'`.
+
+**Cause:** FMP news APIs return `"symbol": null` for many articles. Python's `dict.get("symbol", "")` returns `None` (not `""`) when the key EXISTS with a null value — the default only applies when the key is MISSING. Calling `.strip()` on `None` crashes.
+
+**Solution:** Changed all occurrences from `article.get("symbol", "").strip()` to `(article.get("symbol") or "").strip()`. The `or ""` converts `None` to empty string before `.strip()`.
+
+**Red Flags:** Any JSON field that can be `null` will cause this same bug with the `dict.get(key, default)` pattern. The default value is only used when the key is absent, NOT when the value is null.
+
+**Preventative Guardrail:** For nullable JSON fields, always use `(d.get("key") or "")` pattern, NEVER `d.get("key", "")`.
+
+---
+
+## Entry 10: FMP General News & Press Releases Are Unfiltered
+
+**Symptom:** General news and press releases returning almost no data when filtered to S&P 500 tickers.
+
+**Cause:** These are general market news feeds where `symbol` is often null or non-S&P-500. Filtering to S&P 500 tickers removed 95%+ of results.
+
+**Solution:** Removed S&P 500 dependency entirely from both pipelines. `fetch_general_news` and `fetch_press_releases` no longer accept a `tickers` parameter. Jobs don't call `get_sp500_tickers()`. DAGs (`fmp_global_news_dag.py`, `fmp_press_releases_dag.py`) have no ExternalTaskSensor. Tables use `symbol` column (not `ticker`) with PK `(article_url)`.
+
+**Red Flags:** Not all FMP news endpoints are stock-specific. `fmp-articles` and `stock-latest` ARE ticker-filtered. `general-latest` and `press-releases-latest` are NOT.

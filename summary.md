@@ -46,8 +46,9 @@ Only the `_MARTS` schema is exposed to external consumers (Superset and MCP). RA
 The Python layer follows strict separation of concerns:
 
 - **`src/api_clients/`** — Fetch-only API clients. Return pandas DataFrames. Never touch Snowflake.
-  - `PolygonClient`: Polygon.io (prices, RSI, MACD, SMA, news). Rate limited at 0.8s/request (~75 req/min), 3x retries, 8-worker concurrent fetching.
-  - `FMPClient`: Financial Modeling Prep (income statements, balance sheets, cash flow, news). Rate limited at 0.1s/request (~600 req/min), 3x retries, 8-worker concurrent fetching.
+  - `PolygonClient`: Polygon.io (prices, RSI, MACD, SMA, news, ticker details, benchmark prices, stock snapshot). Rate limited at 0.8s/request (~75 req/min), 3x retries, 8-worker concurrent fetching.
+  - `FMPClient`: Financial Modeling Prep with 15 fetch methods as of Phase 0.5 — financial statements (income, balance sheet, cash flow), key metrics, earnings calendar, analyst consensus (price targets + upgrades/downgrades), dividends, splits, insider trades (2 feed variants), and news (FMP articles, general news, press releases, stock news). Rate limited at 0.1s/request (~600 req/min), 3x retries, 8-worker concurrent fetching.
+  - `FREDClient`: FRED API client for macro rate series (Fed Funds Rate, 10Y Treasury, 2Y Treasury, HY OAS); 0.5s rate limiting per request.
   - `wikipedia_client.fetch_sp500_constituents()`: Wikipedia S&P 500 table scraper with retry-on-403 backoff.
 
 - **`src/loaders/snowflake_loader.py`** — Write-only Snowflake operations. Never calls APIs. Provides four write strategies:
@@ -56,7 +57,7 @@ The Python layer follows strict separation of concerns:
   - `overwrite_partition_with_variants()` — Same as partition, but applies `parse_json()` for VARIANT columns (news articles with JSON arrays).
   - `overwrite_date_range_with_variants()` — Same as date range, with VARIANT handling.
 
-- **`src/jobs/`** — Thin glue layer. Each job calls one API client method, then one loader method. No business logic. 14 job files covering daily ingestion and backfill for all data sources.
+- **`src/jobs/`** — Thin glue layer. Each job calls one API client method, then one loader method. No business logic. 41 job files covering daily ingestion and backfill for all data sources.
 
 - **`src/mcp/`** — Read-only MCP server exposing 5 whitelisted mart tables to Claude Desktop via boring-semantic-layer and ibis-framework.
 
@@ -68,21 +69,29 @@ The Python layer follows strict separation of concerns:
 
 ### Airflow Orchestration
 
-**14 DAGs total**: 9 daily ETL + 4 manual backfill + 1 dbt Cosmos DAG.
+**44 DAGs total**: 27 daily ETL + 14 manual backfill + 1 dbt Cosmos DAG + 2 other (example, legacy).
 
 **Daily execution flow:**
 
 ```
 sp500_lookup (root)  ──── Fetches S&P 500 universe from Wikipedia
        │
-       ├── polygon_daily_prices    (ExternalTaskSensor on sp500_lookup)
-       ├── polygon_daily_rsi       (ExternalTaskSensor on sp500_lookup)
-       ├── polygon_daily_macd      (ExternalTaskSensor on sp500_lookup)
-       ├── polygon_daily_news      (ExternalTaskSensor on sp500_lookup)
-       ├── fmp_income_statement    (ExternalTaskSensor on sp500_lookup, not gated by dbt)
-       ├── fmp_balance_sheet       (ExternalTaskSensor on sp500_lookup, not gated by dbt)
-       ├── fmp_cash_flow           (ExternalTaskSensor on sp500_lookup, not gated by dbt)
-       └── fmp_news_daily          (ExternalTaskSensor on sp500_lookup, not gated by dbt)
+       ├── Polygon (8 daily DAGs, all gated on sp500_lookup):
+       │     polygon_daily_prices, polygon_daily_rsi, polygon_daily_macd,
+       │     polygon_daily_news, polygon_sma, polygon_benchmark_prices,
+       │     polygon_ticker_details, polygon_stock_snapshot
+       │
+       ├── FMP Phase 0 (4 daily DAGs, gated on sp500_lookup):
+       │     fmp_income_statement, fmp_balance_sheet, fmp_cash_flow, fmp_articles_daily
+       │
+       ├── FMP Phase 0.5 (13 daily DAGs, gated on sp500_lookup):
+       │     fmp_income_statement_q, fmp_balance_sheet_q, fmp_cash_flow_q,
+       │     fmp_key_metrics, fmp_earnings_calendar, fmp_analyst_consensus,
+       │     fmp_dividends, fmp_splits, fmp_insider_trades, fmp_insider_trades_search,
+       │     fmp_global_news, fmp_press_releases, fmp_stock_news
+       │
+       └── FRED (1 daily DAG, independent — no upstream sensor):
+             fred_macro_rates
               │
               ▼
 stock_screening_dbt_daily  ──── Cosmos dbt DAG
@@ -90,13 +99,23 @@ stock_screening_dbt_daily  ──── Cosmos dbt DAG
     [Runs: full dbt build (staging → intermediate → dimensions → marts + tests)]
 ```
 
-FMP DAGs run daily but are intentionally not gated by the dbt DAG, since FMP data is annual and changes infrequently.
+FMP DAGs run daily but are intentionally not gated by the dbt DAG, since FMP data is annual/quarterly and changes infrequently. FRED runs independently with no upstream sensor.
 
 **Backfill DAGs (manual trigger, schedule=None):**
 - `polygon_prices_backfill` — 398 days of historical prices
 - `polygon_rsi_backfill` — 730 days of historical RSI
 - `polygon_macd_backfill` — 730 days of historical MACD
 - `polygon_news_backfill` — 398 days of historical news
+- `polygon_benchmark_prices_backfill` — 5 years of benchmark/ETF prices
+- `fmp_dividends_backfill` — 5 years of dividend history
+- `fmp_key_metrics_backfill` — 5 years of key metrics (quarterly)
+- `fmp_insider_trades_backfill` — 5 years of insider trades
+- `fmp_insider_trades_search_backfill` — 5 years of insider trades search
+- `fmp_articles_backfill` — 5 years of FMP articles
+- `fmp_general_news_backfill` — 5 years of FMP general news
+- `fmp_press_releases_backfill` — 5 years of FMP press releases
+- `fmp_stock_news_backfill` — 5 years of FMP stock news
+- `fred_macro_rates_backfill` — 5 years of FRED macro rates
 
 ### dbt Transformation Layer
 
@@ -202,8 +221,9 @@ The project follows seven core principles:
 | Source | API | Data Type | Frequency | Rate Limit |
 |--------|-----|-----------|-----------|-----------|
 | **Wikipedia** | HTML table scrape | S&P 500 constituent list | Daily | ~3 req with backoff on 403 |
-| **Polygon.io** | REST API (v2/v1) | Prices, RSI, MACD, SMA, News | Daily + backfill | 0.8s/req (~75/min, Basic tier) |
-| **Financial Modeling Prep** | REST API (stable) | Income statements, balance sheets, cash flow, news | Daily (annual data) | 0.1s/req (~600/min) |
+| **Polygon.io** | REST API (v2/v1) | Prices, RSI, MACD, SMA, News, Ticker details, Benchmark prices, Stock snapshot | Daily + backfill | 0.8s/req (~75/min, Basic tier) |
+| **Financial Modeling Prep** | REST API (stable) | Income statements, balance sheets, cash flow, key metrics, earnings calendar, dividends, splits, analyst consensus, insider trades, FMP articles, general news, press releases, stock news | Daily + backfill | 0.1s/req (~600/min) |
+| **FRED** | REST API (fred.stlouisfed.org) | Macro rates (Fed Funds, 10Y Treasury, 2Y Treasury, HY OAS) | Daily + backfill | 0.5s/req (120/min) |
 
 ### Raw Data Tables (Snowflake RAW Schema)
 
@@ -417,6 +437,281 @@ The project follows seven core principles:
 
 ---
 
+#### 10. Earnings Calendar — `sp500_earnings_calendar`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| date | DATE | Earnings date |
+| eps_actual | FLOAT | Actual EPS reported |
+| eps_estimated | FLOAT | Consensus EPS estimate |
+| revenue_actual | NUMBER | Actual revenue reported |
+| revenue_estimated | NUMBER | Consensus revenue estimate |
+| last_updated | DATE | Last update date from FMP |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Earnings Calendar API (`/stable/earnings-calendar`). **Grain**: (ticker, date). Forward-looking snapshot — truncated and reloaded each run (up to 30 days forward, max 90 days).
+
+---
+
+#### 11. Ticker Details — `sp500_ticker_details`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| name | VARCHAR | Company name |
+| market | VARCHAR | Market (e.g., stocks) |
+| primary_exchange | VARCHAR | Primary exchange (e.g., XNAS) |
+| active | BOOLEAN | Whether the ticker is actively traded |
+| cik | VARCHAR | SEC CIK identifier |
+| market_cap | NUMBER | Market capitalization |
+| sic_code | VARCHAR | SIC industry code |
+| sic_description | VARCHAR | SIC industry description |
+| total_employees | NUMBER | Employee count |
+| description | VARCHAR | Company description |
+| *(+ 7 more fields)* | | locale, type, currency_name, share_class/weighted shares, list_date, homepage_url |
+| date | DATE | Run date |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: Polygon Reference Tickers API (`/v3/reference/tickers/{ticker}`). **Grain**: (ticker, date). 20 total columns. Daily snapshot of company metadata, market cap, and employee count.
+
+---
+
+#### 12. Quarterly Income Statements — `sp500_income_statements_q`
+
+Same schema as annual `sp500_income_statements` (table 6) but with quarterly periods (Q1-Q4).
+
+**Source**: FMP Income Statement API (`/stable/income-statement?period=quarter`). **Grain**: (ticker, date, period). **~10,000 rows** (~500 tickers x ~20 quarters).
+
+---
+
+#### 13. Quarterly Balance Sheets — `sp500_balance_sheets_q`
+
+Same schema as annual `sp500_balance_sheets` (table 7) but with quarterly periods (Q1-Q4).
+
+**Source**: FMP Balance Sheet API (`/stable/balance-sheet-statement?period=quarter`). **Grain**: (ticker, date, period). **~10,000 rows**.
+
+---
+
+#### 14. Quarterly Cash Flow — `sp500_cash_flow_statements_q`
+
+Same schema as annual `sp500_cash_flow_statements` (table 8) but with quarterly periods (Q1-Q4).
+
+**Source**: FMP Cash Flow API (`/stable/cash-flow-statement?period=quarter`). **Grain**: (ticker, date, period). **~10,000 rows**.
+
+---
+
+#### 15. Key Metrics — `sp500_key_metrics`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| date | DATE | Fiscal period end date |
+| period | VARCHAR | Reporting period (Q1-Q4, FY) |
+| fiscal_year | VARCHAR | Fiscal year |
+| market_cap | NUMBER | Market capitalization |
+| enterprise_value | NUMBER | Enterprise value |
+| ev_to_ebitda | FLOAT | EV/EBITDA ratio |
+| ev_to_free_cash_flow | FLOAT | EV/FCF ratio |
+| current_ratio | FLOAT | Current ratio |
+| return_on_equity | FLOAT | Return on equity |
+| return_on_invested_capital | FLOAT | ROIC |
+| earnings_yield | FLOAT | Earnings yield |
+| free_cash_flow_yield | FLOAT | FCF yield |
+| *(+ 35 more fields)* | | Additional valuation, profitability, efficiency, and capital allocation ratios |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Key Metrics API (`/stable/key-metrics`). **Grain**: (ticker, date, period). 50 total columns covering valuation ratios (EV/EBITDA, P/E proxies), return metrics (ROE, ROA, ROIC), efficiency ratios (days outstanding, cash conversion cycle), and capital allocation metrics.
+
+---
+
+#### 16. Price Target Consensus — `sp500_price_target_consensus`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| target_high | FLOAT | Highest analyst price target |
+| target_low | FLOAT | Lowest analyst price target |
+| target_consensus | FLOAT | Consensus (mean) price target |
+| target_median | FLOAT | Median price target |
+| date | DATE | Run date |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Price Target Consensus API (`/stable/price-target-consensus`). **Grain**: (ticker, date). ~500 rows per daily run.
+
+---
+
+#### 17. Analyst Grades Consensus — `sp500_analyst_grades_consensus`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| strong_buy | INTEGER | Count of Strong Buy ratings |
+| buy | INTEGER | Count of Buy ratings |
+| hold | INTEGER | Count of Hold ratings |
+| sell | INTEGER | Count of Sell ratings |
+| strong_sell | INTEGER | Count of Strong Sell ratings |
+| consensus | VARCHAR | Overall consensus rating (e.g., Buy, Hold) |
+| date | DATE | Run date |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Upgrades/Downgrades Consensus API (`/stable/upgrades-downgrades-consensus`). **Grain**: (ticker, date). ~500 rows per daily run.
+
+---
+
+#### 18. Dividends — `sp500_dividends`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| date | DATE | Ex-dividend date |
+| record_date | DATE | Record date |
+| payment_date | DATE | Payment date |
+| declaration_date | DATE | Declaration date |
+| adj_dividend | FLOAT | Adjusted dividend amount |
+| dividend | FLOAT | Dividend amount |
+| yield | FLOAT | Dividend yield |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Dividends API (`/stable/stock-dividend`). **Grain**: (ticker, date). Full history per ticker.
+
+---
+
+#### 19. Splits — `sp500_splits`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| date | DATE | Split date |
+| numerator | FLOAT | Split numerator (e.g., 4 in a 4:1 split) |
+| denominator | FLOAT | Split denominator (e.g., 1 in a 4:1 split) |
+| split_type | VARCHAR | Type of split |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Splits API (`/stable/historical-stock-split`). **Grain**: (ticker, date). Full history per ticker.
+
+---
+
+#### 20. Benchmark Prices — `sp500_benchmark_prices`
+
+Same schema as `sp500_stock_prices` (table 2): ticker, open, high, low, close, volume, vwap, transactions, date, extracted_at.
+
+**Source**: Polygon Aggregates API. **Grain**: (ticker, date). Covers 15 instruments: SPY, QQQ, IWM (broad market), XLF/XLK/XLE/XLV/XLI/XLY/XLP/XLU/XLC/XLRE/XLB (11 GICS sector ETFs), VIXY (VIX proxy). **~15 rows per trading day**. Backfill covers 5 years.
+
+---
+
+#### 21. Macro Rates — `sp500_macro_rates`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| series_id | VARCHAR | FRED series identifier (e.g., DFF, DGS10) |
+| date | DATE | Observation date |
+| value | FLOAT | Rate/index value |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FRED API (`/fred/series/observations`). **Grain**: (series_id, date). Series: DFF (Federal Funds Rate), DGS10 (10-Year Treasury), DGS2 (2-Year Treasury), BAMLH0A0HYM2 (High Yield OAS). **~4 rows per trading day**. Backfill covers 5 years.
+
+---
+
+#### 22. Insider Trades — `sp500_insider_trades`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol (filtered to S&P 500) |
+| filing_date | DATE | SEC filing date |
+| transaction_date | DATE | Transaction date |
+| reporting_name | VARCHAR | Name of the insider |
+| transaction_type | VARCHAR | Transaction type (e.g., P-Purchase, S-Sale) |
+| securities_transacted | NUMBER | Number of securities transacted |
+| price | FLOAT | Transaction price per share |
+| *(+ 9 more fields)* | | reporting_cik, company_cik, type_of_owner, securities_owned, acquisition_or_disposition, direct_or_indirect, form_type, security_name, url |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Insider Trading Latest API (`/stable/insider-trading/latest`). **Grain**: (ticker, filing_date, reporting_name, transaction_type). 17 total columns. Paginated global feed filtered to S&P 500 tickers.
+
+---
+
+#### 23. Insider Trades Search — `sp500_insider_trades_search`
+
+Same schema as `sp500_insider_trades` (table 22). 17 total columns.
+
+**Source**: FMP Insider Trading Search API (`/stable/insider-trading/search`). **Grain**: (ticker, filing_date, reporting_name, transaction_type). Paginated global search feed filtered to S&P 500 tickers.
+
+---
+
+#### 24. FMP General News — `sp500_fmp_general_news`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| symbol | VARCHAR | Ticker symbol(s) mentioned (may be null) |
+| published_date | TIMESTAMP_NTZ | Publication timestamp |
+| publisher | VARCHAR | Publisher name |
+| title | VARCHAR | Article title |
+| content | VARCHAR | Full article content |
+| article_url | VARCHAR | Article URL |
+| *(+ 3 more fields)* | | image_url, site, date |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP General News API (`/stable/news/general-latest`). **Grain**: (article_url). UNFILTERED — not filtered to S&P 500. Paginated global feed.
+
+---
+
+#### 25. FMP Press Releases — `sp500_fmp_press_releases`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| symbol | VARCHAR | Ticker symbol mentioned |
+| title | VARCHAR | Press release title |
+| date | DATE | Publication date |
+| content | VARCHAR | Full press release content |
+| article_url | VARCHAR | Press release URL |
+| *(+ 2 more fields)* | | image_url, site |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Press Releases API (`/stable/news/press-releases-latest`). **Grain**: (article_url). Paginated global feed.
+
+---
+
+#### 26. FMP Stock News — `sp500_fmp_stock_news`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Matched S&P 500 ticker |
+| published_date | TIMESTAMP_NTZ | Publication timestamp |
+| title | VARCHAR | Article title |
+| date | DATE | Publication date |
+| content | VARCHAR | Full article content |
+| article_url | VARCHAR | Article URL |
+| *(+ 2 more fields)* | | image_url, site |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: FMP Stock News API (`/stable/news/stock-latest`). **Grain**: (ticker, article_url). Paginated global feed filtered to S&P 500 tickers.
+
+---
+
+#### 27. Stock Snapshot — `sp500_stock_snapshot`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock ticker symbol |
+| name | VARCHAR | Company name |
+| market_status | VARCHAR | Market status (open, closed, etc.) |
+| session_change | FLOAT | Session price change |
+| session_change_percent | FLOAT | Session percentage change |
+| session_close | FLOAT | Session close price |
+| session_high | FLOAT | Session high price |
+| session_low | FLOAT | Session low price |
+| session_open | FLOAT | Session open price |
+| session_volume | NUMBER | Session volume |
+| session_vwap | FLOAT | Session VWAP |
+| *(+ 13 more fields)* | | type, early/regular trading changes, previous_close, price, last_minute OHLCV/vwap/transactions |
+| date | DATE | Run date |
+| extracted_at | TIMESTAMP_NTZ | Extraction timestamp |
+
+**Source**: Polygon Snapshot API (`/v3/snapshot?ticker={ticker}`). **Grain**: (ticker, date). 26 total columns covering session data (change, OHLCV, VWAP), last-minute bar data, and ticker metadata. **~500 rows per daily run**.
+
+---
+
 ### Transformed Data (dbt Models)
 
 #### Staging Layer (Views — No Business Logic)
@@ -468,9 +763,28 @@ The project follows seven core principles:
 | RSI values | ~500 rows/trading day | 730-day backfill available |
 | MACD values | ~500 rows/trading day | 730-day backfill available |
 | News articles (Polygon) | ~5,000 rows/day (10 per ticker) | 398-day backfill available |
-| Income statements | ~2,500 total (annual, ~5 years x 500 tickers) | Full history per ticker |
-| Balance sheets | ~2,500 total (annual) | Full history per ticker |
-| Cash flow statements | ~2,500 total (annual) | Full history per ticker |
+| Income statements (annual) | ~2,500 total (~5 years x 500 tickers) | Full history per ticker |
+| Balance sheets (annual) | ~2,500 total | Full history per ticker |
+| Cash flow statements (annual) | ~2,500 total | Full history per ticker |
+| FMP articles | ~500 rows (varies by news volume) | 398-day backfill available |
+| Earnings calendar | ~100-200 rows (forward-looking snapshot) | 30-day forward window |
+| Ticker details | ~500 rows | Daily snapshot |
+| Quarterly income statements | ~10,000 total (~20 quarters x 500 tickers) | 5-year backfill available |
+| Quarterly balance sheets | ~10,000 total | 5-year backfill available |
+| Quarterly cash flow | ~10,000 total | 5-year backfill available |
+| Key metrics | ~10,000 total (quarterly) | 5-year backfill available |
+| Price target consensus | ~500 rows | Daily snapshot |
+| Analyst grades consensus | ~500 rows | Daily snapshot |
+| Dividends | ~2,000-5,000 total (varies by history) | Full history per ticker |
+| Splits | ~50-200 total (infrequent events) | Full history per ticker |
+| Benchmark prices | ~15 rows/trading day (15 instruments) | 5-year backfill available |
+| Macro rates (FRED) | ~4 rows/trading day (4 series) | 5-year backfill available |
+| Insider trades | ~50-200 rows/day (filtered to S&P 500) | 5-year backfill available |
+| Insider trades search | ~50-200 rows/day (filtered to S&P 500) | 5-year backfill available |
+| FMP general news | ~100-500 rows/day (unfiltered) | 5-year backfill available |
+| FMP press releases | ~50-200 rows/day | 5-year backfill available |
+| FMP stock news | ~100-500 rows/day (filtered to S&P 500) | 5-year backfill available |
+| Stock snapshot | ~500 rows | Daily snapshot |
 | Technical scores (mart) | ~500 rows/trading day | Incremental accumulation |
 | Fundamental scores (mart) | ~2,500 total (annual) | Full rebuild each run |
 | Composite scores (mart) | ~500 rows/trading day | Incremental accumulation |
