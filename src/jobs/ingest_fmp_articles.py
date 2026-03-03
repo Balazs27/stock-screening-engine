@@ -11,7 +11,7 @@ from src.loaders.snowflake_loader import (
 from src.utils.dates import today
 
 LOOKUP_TABLE = "sp500_tickers_lookup"
-TABLE = "sp500_fmp_news"
+TABLE = "sp500_fmp_articles"
 
 
 def run(run_date: str):
@@ -24,7 +24,7 @@ def run(run_date: str):
     print(f"Found {len(tickers)} S&P 500 tickers")
 
     client = FMPClient()
-    df = client.fetch_news(tickers, run_date)
+    df = client.fetch_fmp_articles(tickers, run_date)
 
     if df.empty:
         print("No FMP news articles fetched.")

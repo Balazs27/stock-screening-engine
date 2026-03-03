@@ -368,22 +368,28 @@ class FMPClient:
         return pd.DataFrame(results) if results else pd.DataFrame()
 
     # --------------------------------------------------
-    # Endpoint: News (global paginated feed)
+    # Endpoint: News - FMP Articles (global paginated feed)
     # --------------------------------------------------
 
-    def fetch_news(
-        self, tickers: list[str], run_date: str, max_pages: int = 20
+    def fetch_fmp_articles(
+        self, tickers: list[str], run_date: str, max_pages: int = 20, start_date: str = None
     ) -> pd.DataFrame:
-        """Fetch FMP articles for a date, filtered to S&P 500 tickers.
+        """Fetch FMP articles for a date (or date range), filtered to S&P 500 tickers.
 
         Unlike other methods, this is NOT per-ticker. FMP exposes a global
-        article feed that we paginate through and filter.
+        article feed (/stable/fmp-articles) that we paginate through and filter.
+        Ticker format: "NYSE:MRK" or "NYSE:MRK,NASDAQ:AAPL" — exchange prefix stripped.
+
+        Args:
+            start_date: If provided, fetch articles from start_date to run_date (backfill mode).
+                        If None, fetch only articles matching run_date (daily mode).
         """
+        effective_start = start_date or run_date
         ticker_set = set(tickers)
         all_articles = []
         extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        print(f"Fetching FMP articles for {run_date} (filtering to {len(tickers)} S&P 500 tickers)...")
+        print(f"Fetching FMP articles from {effective_start} to {run_date} (filtering to {len(tickers)} S&P 500 tickers)...")
 
         for page in range(max_pages):
             url = (
@@ -409,11 +415,11 @@ class FMPClient:
                 article_date_str = article.get("date", "")
                 article_date = article_date_str[:10] if article_date_str else None
 
-                if article_date and article_date < run_date:
-                    found_older = True
+                if not article_date or article_date > run_date:
                     continue
 
-                if article_date != run_date:
+                if article_date < effective_start:
+                    found_older = True
                     continue
 
                 # Parse tickers — format: "NYSE:MRK" or "NYSE:MRK,NASDAQ:AAPL"
@@ -430,7 +436,7 @@ class FMPClient:
                         {
                             "ticker": ticker,
                             "title": article.get("title"),
-                            "date": run_date,
+                            "date": article_date,
                             "content": article.get("content"),
                             "article_tickers": raw_tickers,
                             "image_url": article.get("image"),
@@ -448,8 +454,768 @@ class FMPClient:
             )
 
             if found_older:
-                print(f"  Reached articles older than {run_date}, stopping.")
+                print(f"  Reached articles older than {effective_start}, stopping.")
                 break
 
-        print(f"\nTotal: {len(all_articles)} articles for {run_date}\n")
+        print(f"\nTotal: {len(all_articles)} articles from {effective_start} to {run_date}\n")
         return pd.DataFrame(all_articles) if all_articles else pd.DataFrame()
+    
+    # --------------------------------------------------
+    # Endpoint: News - FMP General News (global paginated feed)
+    # --------------------------------------------------
+
+    def fetch_general_news(
+        self, run_date: str, max_pages: int = 20, start_date: str = None
+    ) -> pd.DataFrame:
+        """Fetch general news for a date (or date range), unfiltered.
+
+        Global paginated feed (/stable/news/general-latest). Not stock-specific —
+        returns all general market news regardless of ticker.
+
+        Args:
+            start_date: If provided, fetch articles from start_date to run_date (backfill mode).
+                        If None, fetch only articles matching run_date (daily mode).
+        """
+        effective_start = start_date or run_date
+        all_articles = []
+        extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"Fetching FMP general news from {effective_start} to {run_date}...")
+
+        for page in range(max_pages):
+            url = (
+                f"{BASE_URL}/stable/news/general-latest"
+                f"?page={page}"
+                f"&limit=250"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                print(f"  Page {page}: HTTP {response.status_code}, stopping.")
+                break
+
+            data = response.json()
+            if not data:
+                print(f"  Page {page}: empty response, stopping.")
+                break
+
+            page_matches = 0
+            found_older = False
+
+            for article in data:
+                # general-latest uses "publishedDate" as the date field
+                article_date_str = article.get("publishedDate", "")
+                article_date = article_date_str[:10] if article_date_str else None
+
+                if not article_date or article_date > run_date:
+                    continue
+
+                if article_date < effective_start:
+                    found_older = True
+                    continue
+
+                symbol = (article.get("symbol") or "").strip() or None
+
+                all_articles.append(
+                    {
+                        "symbol": symbol,
+                        "published_date": article.get("publishedDate"),
+                        "publisher": article.get("publisher"),
+                        "title": article.get("title"),
+                        "site": article.get("site"),
+                        "content": article.get("text"),
+                        "image_url": article.get("image"),
+                        "article_url": article.get("url"),
+                        "date": article_date,
+                        "extracted_at": extracted_at,
+                    }
+                )
+                page_matches += 1
+
+            print(
+                f"  Page {page}: {len(data)} articles, "
+                f"{page_matches} within date range"
+            )
+
+            if found_older:
+                print(f"  Reached articles older than {effective_start}, stopping.")
+                break
+
+        print(f"\nTotal: {len(all_articles)} general news articles from {effective_start} to {run_date}\n")
+        return pd.DataFrame(all_articles) if all_articles else pd.DataFrame()
+    
+    # --------------------------------------------------
+    # Endpoint: News - FMP Press Releases (global paginated feed)
+    # --------------------------------------------------
+
+    def fetch_press_releases(
+        self, run_date: str, max_pages: int = 20, start_date: str = None
+    ) -> pd.DataFrame:
+        """Fetch press releases for a date (or date range), unfiltered.
+
+        Global paginated feed (/stable/news/press-releases-latest). Not stock-specific —
+        returns all press releases regardless of ticker.
+
+        Args:
+            start_date: If provided, fetch articles from start_date to run_date (backfill mode).
+                        If None, fetch only articles matching run_date (daily mode).
+        """
+        effective_start = start_date or run_date
+        all_articles = []
+        extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"Fetching FMP press releases from {effective_start} to {run_date}...")
+
+        for page in range(max_pages):
+            url = (
+                f"{BASE_URL}/stable/news/press-releases-latest"
+                f"?page={page}"
+                f"&limit=250"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                print(f"  Page {page}: HTTP {response.status_code}, stopping.")
+                break
+
+            data = response.json()
+            if not data:
+                print(f"  Page {page}: empty response, stopping.")
+                break
+
+            page_matches = 0
+            found_older = False
+
+            for article in data:
+                article_date_str = article.get("publishedDate", "")
+                article_date = article_date_str[:10] if article_date_str else None
+
+                if not article_date or article_date > run_date:
+                    continue
+
+                if article_date < effective_start:
+                    found_older = True
+                    continue
+
+                symbol = (article.get("symbol") or "").strip() or None
+
+                all_articles.append(
+                    {
+                        "symbol": symbol,
+                        "title": article.get("title"),
+                        "date": article_date,
+                        "content": article.get("text"),
+                        "image_url": article.get("image"),
+                        "article_url": article.get("url"),
+                        "site": article.get("site"),
+                        "extracted_at": extracted_at,
+                    }
+                )
+                page_matches += 1
+
+            print(
+                f"  Page {page}: {len(data)} press releases, "
+                f"{page_matches} within date range"
+            )
+
+            if found_older:
+                print(f"  Reached articles older than {effective_start}, stopping.")
+                break
+
+        print(f"\nTotal: {len(all_articles)} press releases from {effective_start} to {run_date}\n")
+        return pd.DataFrame(all_articles) if all_articles else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: News - FMP Stock News (global paginated feed)
+    # --------------------------------------------------
+
+    def fetch_stock_news(
+        self, tickers: list[str], run_date: str, max_pages: int = 20, start_date: str = None
+    ) -> pd.DataFrame:
+        """Fetch stock-specific news for a date (or date range), filtered to S&P 500 tickers.
+
+        Endpoint: /stable/news/stock-latest
+        Ticker field: "symbol" — plain ticker, no exchange prefix (can be null).
+
+        Args:
+            start_date: If provided, fetch articles from start_date to run_date (backfill mode).
+                        If None, fetch only articles matching run_date (daily mode).
+        """
+        effective_start = start_date or run_date
+        ticker_set = set(tickers)
+        all_articles = []
+        extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"Fetching FMP stock news from {effective_start} to {run_date} (filtering to {len(tickers)} S&P 500 tickers)...")
+
+        for page in range(max_pages):
+            url = (
+                f"{BASE_URL}/stable/news/stock-latest"
+                f"?page={page}"
+                f"&limit=250"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                print(f"  Page {page}: HTTP {response.status_code}, stopping.")
+                break
+
+            data = response.json()
+            if not data:
+                print(f"  Page {page}: empty response, stopping.")
+                break
+
+            page_matches = 0
+            found_older = False
+
+            for article in data:
+                article_date_str = article.get("publishedDate", "")
+                article_date = article_date_str[:10] if article_date_str else None
+
+                if not article_date or article_date > run_date:
+                    continue
+
+                if article_date < effective_start:
+                    found_older = True
+                    continue
+
+                symbol = (article.get("symbol") or "").strip()
+                if not symbol or symbol not in ticker_set:
+                    continue
+
+                all_articles.append(
+                    {
+                        "ticker": symbol,
+                        "published_date": article.get("publishedDate"),
+                        "title": article.get("title"),
+                        "date": article_date,
+                        "content": article.get("text"),
+                        "image_url": article.get("image"),
+                        "article_url": article.get("url"),
+                        "site": article.get("site"),
+                        "extracted_at": extracted_at,
+                    }
+                )
+                page_matches += 1
+
+            print(
+                f"  Page {page}: {len(data)} stock news articles, "
+                f"{page_matches} matched S&P 500 tickers"
+            )
+
+            if found_older:
+                print(f"  Reached articles older than {effective_start}, stopping.")
+                break
+
+        print(f"\nTotal: {len(all_articles)} stock news articles from {effective_start} to {run_date}\n")
+        return pd.DataFrame(all_articles) if all_articles else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Earnings Calendar (global, filtered to S&P 500)
+    # --------------------------------------------------
+
+    def fetch_earnings_calendar(
+        self, tickers: list[str], from_date: str, to_date: str
+    ) -> pd.DataFrame:
+        """Fetch earnings calendar for a date range, filtered to S&P 500 tickers.
+
+        Unlike per-ticker methods, this calls a single global endpoint and
+        filters the results to the provided ticker list.
+
+        Args:
+            tickers: S&P 500 ticker list for post-fetch filtering.
+            from_date: Start date (YYYY-MM-DD).
+            to_date: End date (YYYY-MM-DD).
+
+        Returns:
+            DataFrame with columns: ticker, date, eps, eps_estimated, time,
+            revenue, revenue_estimated, updated_from_date, fiscal_date_ending,
+            extracted_at. Empty DataFrame if no data.
+        """
+        # NOTE: Max 90-day date range per API call. Retrieve historical values up to 5 years.
+        ticker_set = set(tickers)
+        url = (
+            f"{BASE_URL}/stable/earnings-calendar"
+            f"?from={from_date}"
+            f"&to={to_date}"
+            f"&apikey={self.api_key}"
+        )
+        response = self._get(url)
+        if response.status_code != 200:
+            print(f"Earnings calendar HTTP {response.status_code}")
+            return pd.DataFrame()
+
+        data = response.json()
+        if not data or isinstance(data, dict):
+            return pd.DataFrame()
+
+        extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = []
+        for r in data:
+            symbol = r.get("symbol", "")
+            if symbol not in ticker_set:
+                continue
+            rows.append({
+                "ticker": symbol,
+                "date": r.get("date"),
+                "eps_actual": r.get("epsActual"),
+                "eps_estimated": r.get("epsEstimated"),
+                "revenue_actual": r.get("revenueActual"),
+                "revenue_estimated": r.get("revenueEstimated"),
+                "last_updated": r.get("lastUpdated"),
+                "extracted_at": extracted_at,
+            })
+
+        print(f"Earnings calendar: {len(data)} total events, {len(rows)} S&P 500 matches")
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Key Metrics / Valuation Multiples
+    # --------------------------------------------------
+
+    def fetch_key_metrics(
+        self, tickers: list[str], period: str = "quarter"
+    ) -> pd.DataFrame:
+        """Fetch key valuation metrics for a list of tickers.
+
+        Args:
+            tickers: List of ticker symbols.
+            period: Fiscal period — "quarter" or "annual".
+
+        Returns:
+            DataFrame with 48 columns including valuation ratios, per-share
+            metrics, efficiency ratios, and profitability metrics.
+            Empty DataFrame if no data.
+        """
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/stable/key-metrics"
+                f"?symbol={ticker}"
+                f"&period={period}"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if not data or isinstance(data, dict):
+                return []
+            extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rows = []
+            for r in data:
+                rows.append({
+                    "ticker": r.get("symbol"),
+                    "date": r.get("date"),
+                    "period": r.get("period"),
+                    "fiscal_year": r.get("fiscalYear"),
+                    "reported_currency": r.get("reportedCurrency"),
+                    "market_cap": r.get("marketCap"),
+                    "enterprise_value": r.get("enterpriseValue"),
+                    "ev_to_sales": r.get("evToSales"),
+                    "ev_to_operating_cash_flow": r.get("evToOperatingCashFlow"),
+                    "ev_to_free_cash_flow": r.get("evToFreeCashFlow"),
+                    "ev_to_ebitda": r.get("evToEBITDA"),
+                    "net_debt_to_ebitda": r.get("netDebtToEBITDA"),
+                    "current_ratio": r.get("currentRatio"),
+                    "income_quality": r.get("incomeQuality"),
+                    "graham_number": r.get("grahamNumber"),
+                    "graham_net_net": r.get("grahamNetNet"),
+                    "tax_burden": r.get("taxBurden"),
+                    "interest_burden": r.get("interestBurden"),
+                    "working_capital": r.get("workingCapital"),
+                    "invested_capital": r.get("investedCapital"),
+                    "return_on_assets": r.get("returnOnAssets"),
+                    "operating_return_on_assets": r.get("operatingReturnOnAssets"),
+                    "return_on_tangible_assets": r.get("returnOnTangibleAssets"),
+                    "return_on_equity": r.get("returnOnEquity"),
+                    "return_on_invested_capital": r.get("returnOnInvestedCapital"),
+                    "return_on_capital_employed": r.get("returnOnCapitalEmployed"),
+                    "earnings_yield": r.get("earningsYield"),
+                    "free_cash_flow_yield": r.get("freeCashFlowYield"),
+                    "capex_to_operating_cash_flow": r.get("capexToOperatingCashFlow"),
+                    "capex_to_depreciation": r.get("capexToDepreciation"),
+                    "capex_to_revenue": r.get("capexToRevenue"),
+                    "sales_general_and_administrative_to_revenue": r.get("salesGeneralAndAdministrativeToRevenue"),
+                    "research_and_development_to_revenue": r.get("researchAndDevelopementToRevenue"),
+                    "stock_based_compensation_to_revenue": r.get("stockBasedCompensationToRevenue"),
+                    "intangibles_to_total_assets": r.get("intangiblesToTotalAssets"),
+                    "average_receivables": r.get("averageReceivables"),
+                    "average_payables": r.get("averagePayables"),
+                    "average_inventory": r.get("averageInventory"),
+                    "days_of_sales_outstanding": r.get("daysOfSalesOutstanding"),
+                    "days_of_payables_outstanding": r.get("daysOfPayablesOutstanding"),
+                    "days_of_inventory_outstanding": r.get("daysOfInventoryOutstanding"),
+                    "operating_cycle": r.get("operatingCycle"),
+                    "cash_conversion_cycle": r.get("cashConversionCycle"),
+                    "free_cash_flow_to_equity": r.get("freeCashFlowToEquity"),
+                    "free_cash_flow_to_firm": r.get("freeCashFlowToFirm"),
+                    "tangible_asset_value": r.get("tangibleAssetValue"),
+                    "net_current_asset_value": r.get("netCurrentAssetValue"),
+                    "extracted_at": extracted_at,
+                })
+            return rows
+
+        results = self._fetch_batch(tickers, _fetch_one, label="key metrics")
+        return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Price Target Consensus
+    # --------------------------------------------------
+
+    ### NEED A BACKFILL PIPELINE AS WELL FOR THE PAST 5 YEARS!!!
+    def fetch_price_target_consensus(
+        self, tickers: list[str], run_date: str
+    ) -> pd.DataFrame:
+        """Fetch analyst price target consensus for a list of tickers.
+
+        Args:
+            tickers: List of ticker symbols.
+            run_date: Date string for snapshot dating.
+
+        Returns:
+            DataFrame with columns: ticker, target_high, target_low,
+            target_consensus, target_median, date, extracted_at.
+        """
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/stable/price-target-consensus"
+                f"?symbol={ticker}"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if not data or isinstance(data, dict):
+                return []
+            extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rows = []
+            for r in data:
+                rows.append({
+                    "ticker": ticker,
+                    "target_high": r.get("targetHigh"),
+                    "target_low": r.get("targetLow"),
+                    "target_consensus": r.get("targetConsensus"),
+                    "target_median": r.get("targetMedian"),
+                    "date": run_date,
+                    "extracted_at": extracted_at,
+                })
+            return rows
+
+        results = self._fetch_batch(tickers, _fetch_one, label="price targets")
+        return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Analyst Grades Consensus
+    # --------------------------------------------------
+
+    ### NEED A BACKFILL PIPELINE AS WELL FOR THE PAST 5 YEARS!!!
+    def fetch_upgrades_downgrades_consensus(
+        self, tickers: list[str], run_date: str
+    ) -> pd.DataFrame:
+        """Fetch analyst grades consensus for a list of tickers.
+
+        Args:
+            tickers: List of ticker symbols.
+            run_date: Date string for snapshot dating.
+
+        Returns:
+            DataFrame with columns: ticker, strong_buy, buy, hold, sell,
+            strong_sell, consensus, date, extracted_at.
+        """
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/stable/grades-consensus"
+                f"?symbol={ticker}"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if not data or isinstance(data, dict):
+                return []
+            extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rows = []
+            for r in data:
+                rows.append({
+                    "ticker": ticker,
+                    "strong_buy": r.get("strongBuy"),
+                    "buy": r.get("buy"),
+                    "hold": r.get("hold"),
+                    "sell": r.get("sell"),
+                    "strong_sell": r.get("strongSell"),
+                    "consensus": r.get("consensus"),
+                    "date": run_date,
+                    "extracted_at": extracted_at,
+                })
+            return rows
+
+        results = self._fetch_batch(tickers, _fetch_one, label="ratings consensus")
+        return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Dividends
+    # --------------------------------------------------
+
+    def fetch_dividends(self, tickers: list[str]) -> pd.DataFrame:
+        """Fetch historical dividend data for a list of tickers.
+
+        Returns:
+            DataFrame with columns: ticker, date, adj_dividend, dividend,
+            record_date, payment_date, declaration_date, extracted_at.
+        """
+        def _null_if_empty(v):
+            return None if v in ("", None) else v
+    
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/stable/dividends"
+                f"?symbol={ticker}"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if not data or isinstance(data, dict):
+                return []
+            extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rows = []
+            for r in data:
+                rows.append({
+                    "ticker": ticker,
+                    "date": r.get("date"),
+                    "record_date": _null_if_empty(r.get("recordDate")),
+                    "payment_date": _null_if_empty(r.get("paymentDate")),
+                    "declaration_date": _null_if_empty(r.get("declarationDate")),
+                    "adj_dividend": r.get("adjDividend"),
+                    "dividend": r.get("dividend"),
+                    "yield": r.get("yield"),
+                    "extracted_at": extracted_at,
+                })
+            return rows
+
+        results = self._fetch_batch(tickers, _fetch_one, label="dividends")
+        return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Stock Splits
+    # --------------------------------------------------
+
+    def fetch_splits(self, tickers: list[str]) -> pd.DataFrame:
+        """Fetch historical stock split data for a list of tickers.
+
+        Returns:
+            DataFrame with columns: ticker, date, numerator, denominator,
+            extracted_at.
+        """
+
+        def _fetch_one(ticker):
+            url = (
+                f"{BASE_URL}/stable/splits"
+                f"?symbol={ticker}"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if not data or isinstance(data, dict):
+                return []
+            extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rows = []
+            for r in data:
+                rows.append({
+                    "ticker": ticker,
+                    "date": r.get("date"),
+                    "numerator": r.get("numerator"),
+                    "denominator": r.get("denominator"),
+                    "split_type": r.get("splitType"),
+                    "extracted_at": extracted_at,
+                })
+            return rows
+
+        results = self._fetch_batch(tickers, _fetch_one, label="splits")
+        return pd.DataFrame(results) if results else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Insider Trades Latest (paginated global feed)
+    # --------------------------------------------------
+
+    def fetch_insider_trades_latest(
+        self, tickers: list[str], run_date: str, max_pages: int = 20
+    ) -> pd.DataFrame:
+        """Fetch insider trades from the latest paginated global feed.
+
+        Endpoint: /stable/insider-trading/latest
+        Filters results to provided S&P 500 ticker set via "symbol" field.
+
+        Args:
+            tickers: S&P 500 ticker list for post-fetch filtering.
+            run_date: Date string (YYYY-MM-DD) — stop paginating when we
+                reach filingDate older than run_date.
+            max_pages: Max pages to paginate (default 20).
+
+        Returns:
+            DataFrame with 16 columns: ticker, filing_date, transaction_date,
+            reporting_cik, company_cik, transaction_type, securities_owned,
+            reporting_name, type_of_owner, acquisition_or_disposition,
+            direct_or_indirect, form_type, securities_transacted, price,
+            security_name, url, extracted_at.
+        """
+        ticker_set = set(tickers)
+        all_rows = []
+        extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"Fetching insider trades (latest feed) for {run_date}...")
+
+        for page in range(max_pages):
+            url = (
+                f"{BASE_URL}/stable/insider-trading/latest"
+                f"?page={page}"
+                f"&limit=100"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                print(f"  Page {page}: HTTP {response.status_code}, stopping.")
+                break
+
+            data = response.json()
+            if not data:
+                print(f"  Page {page}: empty response, stopping.")
+                break
+
+            page_matches = 0
+            found_older = False
+
+            for r in data:
+                filing_date = (r.get("filingDate") or "")[:10]
+                if filing_date and filing_date < run_date:
+                    found_older = True
+                    continue
+
+                symbol = r.get("symbol", "")
+                if symbol not in ticker_set:
+                    continue
+
+                all_rows.append({
+                    "ticker": symbol,
+                    "filing_date": r.get("filingDate"),
+                    "transaction_date": r.get("transactionDate"),
+                    "reporting_cik": r.get("reportingCik"),
+                    "company_cik": r.get("companyCik"),
+                    "transaction_type": r.get("transactionType"),
+                    "securities_owned": r.get("securitiesOwned"),
+                    "reporting_name": r.get("reportingName"),
+                    "type_of_owner": r.get("typeOfOwner"),
+                    "acquisition_or_disposition": r.get("acquisitionOrDisposition"),
+                    "direct_or_indirect": r.get("directOrIndirect"),
+                    "form_type": r.get("formType"),
+                    "securities_transacted": r.get("securitiesTransacted"),
+                    "price": r.get("price"),
+                    "security_name": r.get("securityName"),
+                    "url": r.get("url"),
+                    "extracted_at": extracted_at,
+                })
+                page_matches += 1
+
+            print(f"  Page {page}: {len(data)} trades, {page_matches} matched S&P 500 tickers")
+
+            if found_older:
+                print(f"  Reached trades older than {run_date}, stopping.")
+                break
+
+        print(f"\nTotal: {len(all_rows)} insider trades (latest) for {run_date}\n")
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+
+    # --------------------------------------------------
+    # Endpoint: Insider Trades Search (paginated global feed)
+    # --------------------------------------------------
+
+    def fetch_insider_trades_search(
+        self, tickers: list[str], run_date: str, max_pages: int = 20
+    ) -> pd.DataFrame:
+        """Fetch insider trades from the searchable paginated global feed.
+
+        Endpoint: /stable/insider-trading/search
+        Same JSON schema as fetch_insider_trades_latest.
+
+        Args:
+            tickers: S&P 500 ticker list for post-fetch filtering.
+            run_date: Date string (YYYY-MM-DD) — stop paginating when we
+                reach filingDate older than run_date.
+            max_pages: Max pages to paginate (default 20).
+
+        Returns:
+            Same schema as fetch_insider_trades_latest.
+        """
+        ticker_set = set(tickers)
+        all_rows = []
+        extracted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"Fetching insider trades (search feed) for {run_date}...")
+
+        for page in range(max_pages):
+            url = (
+                f"{BASE_URL}/stable/insider-trading/search"
+                f"?page={page}"
+                f"&limit=100"
+                f"&apikey={self.api_key}"
+            )
+            response = self._get(url)
+            if response.status_code != 200:
+                print(f"  Page {page}: HTTP {response.status_code}, stopping.")
+                break
+
+            data = response.json()
+            if not data:
+                print(f"  Page {page}: empty response, stopping.")
+                break
+
+            page_matches = 0
+            found_older = False
+
+            for r in data:
+                filing_date = (r.get("filingDate") or "")[:10]
+                if filing_date and filing_date < run_date:
+                    found_older = True
+                    continue
+
+                symbol = r.get("symbol", "")
+                if symbol not in ticker_set:
+                    continue
+
+                all_rows.append({
+                    "ticker": symbol,
+                    "filing_date": r.get("filingDate"),
+                    "transaction_date": r.get("transactionDate"),
+                    "reporting_cik": r.get("reportingCik"),
+                    "company_cik": r.get("companyCik"),
+                    "transaction_type": r.get("transactionType"),
+                    "securities_owned": r.get("securitiesOwned"),
+                    "reporting_name": r.get("reportingName"),
+                    "type_of_owner": r.get("typeOfOwner"),
+                    "acquisition_or_disposition": r.get("acquisitionOrDisposition"),
+                    "direct_or_indirect": r.get("directOrIndirect"),
+                    "form_type": r.get("formType"),
+                    "securities_transacted": r.get("securitiesTransacted"),
+                    "price": r.get("price"),
+                    "security_name": r.get("securityName"),
+                    "url": r.get("url"),
+                    "extracted_at": extracted_at,
+                })
+                page_matches += 1
+
+            print(f"  Page {page}: {len(data)} trades, {page_matches} matched S&P 500 tickers")
+
+            if found_older:
+                print(f"  Reached trades older than {run_date}, stopping.")
+                break
+
+        print(f"\nTotal: {len(all_rows)} insider trades (search) for {run_date}\n")
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()

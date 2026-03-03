@@ -1,0 +1,67 @@
+import sys
+import os
+from dotenv import load_dotenv
+
+from src.api_clients.fmp_client import FMPClient
+from src.loaders.snowflake_loader import (
+    get_snowflake_session,
+    get_sp500_tickers,
+    overwrite_date_range,
+)
+from src.utils.dates import today
+
+LOOKUP_TABLE = "sp500_tickers_lookup"
+TABLE = "sp500_splits"
+
+
+def run(run_date: str):
+    print(f"Starting S&P 500 splits ingestion for {run_date}...")
+
+    session = get_snowflake_session()
+    schema = os.environ["STUDENT_SCHEMA"]
+
+    tickers = get_sp500_tickers(session, f"{schema}.{LOOKUP_TABLE}", run_date)
+    print(f"Found {len(tickers)} S&P 500 tickers")
+
+    client = FMPClient()
+    df = client.fetch_splits(tickers)
+
+    if df.empty:
+        print("No split data fetched.")
+        session.close()
+        return
+
+    start_date = df["date"].min()
+    end_date = df["date"].max()
+
+    fq_table = f"{schema}.{TABLE}"
+
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {fq_table} (
+        ticker VARCHAR,
+        date DATE,
+        numerator FLOAT,
+        denominator FLOAT,
+        split_type VARCHAR,
+        extracted_at TIMESTAMP_NTZ,
+        PRIMARY KEY (ticker, date)
+    )
+    """
+
+    overwrite_date_range(
+        session=session,
+        df=df,
+        table_name=fq_table,
+        start_date=start_date,
+        end_date=end_date,
+        create_table_sql=create_table_sql,
+    )
+
+    print(f"Successfully wrote {len(df)} split records to {fq_table}")
+    print(f"Date range: {start_date} to {end_date}")
+    session.close()
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    run(sys.argv[1] if len(sys.argv) > 1 else today())

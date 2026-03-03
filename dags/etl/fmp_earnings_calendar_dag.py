@@ -3,7 +3,7 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.sensors.external_task import ExternalTaskSensor
 from datetime import datetime, timedelta
 
-from src.jobs.ingest_fmp_news import run
+from src.jobs.ingest_fmp_earnings_calendar import run
 
 default_args = {
     "owner": "airflow",
@@ -12,13 +12,13 @@ default_args = {
 }
 
 with DAG(
-    dag_id="fmp_news_daily",
+    dag_id="fmp_earnings_calendar",
     default_args=default_args,
-    description="Fetch daily S&P 500 news from FMP (experimental, compare vs Polygon)",
+    description="Fetch S&P 500 earnings calendar from FMP (30-day forward window)",
     schedule="@daily",
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["etl", "fmp", "daily", "experimental"],
+    tags=["etl", "fmp", "daily"],
 ) as dag:
 
     wait_for_universe = ExternalTaskSensor(
@@ -30,10 +30,10 @@ with DAG(
         mode="poke",
     )
 
-    ingest_fmp_news = PythonOperator(
-        task_id="ingest_fmp_news",
+    ingest_earnings_calendar = PythonOperator(
+        task_id="ingest_fmp_earnings_calendar",
         python_callable=run,
         op_kwargs={"run_date": "{{ ds }}"},
     )
 
-    wait_for_universe >> ingest_fmp_news
+    wait_for_universe >> ingest_earnings_calendar
